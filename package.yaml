@@ -1,0 +1,65 @@
+name: mini-lang
+version: 0.1.0.0
+github: bartoszluka/mini-lang
+description: Complier for the mini language
+license: BSD3
+author: Bartek Łuka
+maintainer: bartoszluka1@gmail.com
+copyright: MIT
+
+default-extensions:
+- NoImplicitPrelude
+
+extra-source-files:
+  - README.md
+  - CHANGELOG.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+dependencies:
+  - base >= 4.7 && < 5
+  - relude
+  - text
+  - megaparsec
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Widentities
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Wmissing-export-lists
+  - -Wmissing-home-modules
+  - -Wpartial-fields
+  - -Wredundant-constraints
+
+library:
+  source-dirs: src
+
+executables:
+  mini-lang-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - mini-lang
+
+tests:
+  mini-lang-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N
+    dependencies:
+      - mini-lang
+      - hspec
+      - hspec-contrib
+      - QuickCheck
+      - HUnit
