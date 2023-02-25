@@ -9,6 +9,7 @@ copyright: MIT
 
 default-extensions:
 - NoImplicitPrelude
+- OverloadedStrings
 
 extra-source-files:
   - README.md
