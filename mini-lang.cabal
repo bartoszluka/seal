@@ -33,10 +33,12 @@ library
   default-extensions:
       NoImplicitPrelude
       OverloadedStrings
+      ImportQualifiedPost
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       base >=4.7 && <5
     , megaparsec
+    , parser-combinators
     , relude
     , text
   default-language: Haskell2010
@@ -50,11 +52,13 @@ executable mini-lang-exe
   default-extensions:
       NoImplicitPrelude
       OverloadedStrings
+      ImportQualifiedPost
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
     , megaparsec
     , mini-lang
+    , parser-combinators
     , relude
     , text
   default-language: Haskell2010
@@ -69,6 +73,7 @@ test-suite mini-lang-test
   default-extensions:
       NoImplicitPrelude
       OverloadedStrings
+      ImportQualifiedPost
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       HUnit
@@ -78,6 +83,7 @@ test-suite mini-lang-test
     , hspec-contrib
     , megaparsec
     , mini-lang
+    , parser-combinators
     , relude
     , text
   default-language: Haskell2010

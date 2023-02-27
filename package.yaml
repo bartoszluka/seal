@@ -10,6 +10,7 @@ copyright: MIT
 default-extensions:
 - NoImplicitPrelude
 - OverloadedStrings
+- ImportQualifiedPost
 
 extra-source-files:
   - README.md
@@ -24,6 +25,7 @@ dependencies:
   - relude
   - text
   - megaparsec
+  - parser-combinators
 
 ghc-options:
   - -Wall

@@ -4,11 +4,13 @@ module MiniLang (
 ) where
 
 import Control.Applicative hiding (many, some)
+import Control.Monad.Combinators (choice)
+import Control.Monad.Combinators.Expr
 import Data.Text qualified as T
-import Relude
+import Relude hiding (Sum)
 import Relude.Unsafe as Unsafe
 import Text.Megaparsec (ErrorItem (..), MonadParsec (notFollowedBy, try), ParseError, Parsec, failure, parse, satisfy, single, unexpected, (<?>), (<|>))
-import Text.Megaparsec.Char (char, digitChar, space, space1)
+import Text.Megaparsec.Char (alphaNumChar, char, digitChar, letterChar, space, space1)
 import Text.Megaparsec.Char.Lexer qualified as L
 import Text.Megaparsec.Error (ErrorItem (Tokens))
 
@@ -36,25 +38,120 @@ data Declaration
     deriving (Show)
 
 data Expression
-    = -- TODO: precedence here or somewhere else?
-      UnaryOp UnaryOperator Expression -- right
-    | BitwiseOp Expression BitwiseOperator Expression -- left
-    | MultiplicationOp Expression BinaryOperator Expression -- left
-    | AdditiveOp Expression BinaryOperator Expression -- left
-    | RelationOp Expression BinaryOperator Expression -- left
-    | LogicOp Expression BinaryOperator Expression -- left
-    | Assignment Identifier Expression -- right
+    = -- unary, right
+      UnaryMinus Expression
+    | BitwiseNeg Expression
+    | LogicalNeg Expression
+    | IntCast Expression
+    | DoubleCast Expression
+    | -- bitwise, left
+      BitwiseSum Expression Expression
+    | BitwiseMult Expression Expression
+    | -- mulitiplicative, left
+      Multiplication Expression Expression
+    | Division Expression Expression
+    | -- additive, left
+      Sum Expression Expression
+    | Subtraction Expression Expression
+    | -- relations, left
+      GreaterThen Expression Expression
+    | GreaterThenEq Expression Expression
+    | LessThen Expression Expression
+    | LessThenEq Expression Expression
+    | Equal Expression Expression
+    | NotEqual Expression Expression
+    | -- logical, left
+      LogicOr Expression Expression
+    | LogicAnd Expression Expression
+    | -- assignment, right
+      Assignment Identifier Expression
     | Identifier Identifier
     | IntLiteral Int
     | DoubleLiteral Double
     | BoolLiteral Bool
     deriving (Show)
 
-type UnaryOperator = Undefined
-type BitwiseOperator = Undefined
-type BinaryOperator = Undefined
-
 type Parser = Parsec Void Text
+
+spaceConsumer :: Parser ()
+spaceConsumer = undefined
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme spaceConsumer
+
+symbol = L.symbol spaceConsumer
+
+identifier :: Parser Expression
+identifier = Identifier <$> (lexeme ident <?> "identifier")
+  where
+    ident = do
+        firstChar :: Char <- letterChar
+        rest <- many alphaNumChar
+        return . T.pack $ firstChar : rest
+
+parens :: Parser a -> Parser a
+parens = between (symbol "(") (symbol ")")
+
+between open close p = open *> p <* close
+
+pTerm :: Parser Expression
+pTerm =
+    choice
+        [ parens pExpr
+        , identifier
+        , try intLiteral
+        , doubleLiteral
+        ]
+
+pExpr :: Parser Expression
+pExpr = makeExprParser pTerm operatorTable
+
+operatorTable :: [[Operator Parser Expression]]
+operatorTable =
+    [
+        [ prefix "-" UnaryMinus
+        , prefix "~" BitwiseNeg
+        , prefix "!" LogicalNeg
+        , prefix "(int)" IntCast
+        , prefix "(double)" DoubleCast
+        ]
+    ,
+        [ binaryL "|" BitwiseSum
+        , binaryL "&" BitwiseMult
+        ]
+    ,
+        [ binaryL "*" Multiplication
+        , binaryL "/" Division
+        ]
+    ,
+        [ binaryL "+" Sum
+        , binaryL "-" Subtraction
+        ]
+    ,
+        [ binaryL ">" GreaterThen
+        , binaryL ">=" GreaterThenEq
+        , binaryL "<" LessThen
+        , binaryL "<=" LessThenEq
+        , binaryL "==" Equal
+        , binaryL "!=" NotEqual
+        ]
+    ,
+        [ binaryL "||" LogicOr
+        , binaryL "&&" LogicAnd
+        ]
+    ,
+        [ binaryR "=" Assignment
+        ]
+    ]
+
+binaryR :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
+binaryR name f = InfixR (f <$ symbol name)
+
+binaryL :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
+binaryL name f = InfixL (f <$ symbol name)
+
+prefix :: Text -> (Expression -> Expression) -> Operator Parser Expression
+prefix name f = Prefix (f <$ symbol name)
 
 intLiteral :: Parser Expression
 intLiteral = (try zeroParser <|> otherNumberParser) <?> "integer"
