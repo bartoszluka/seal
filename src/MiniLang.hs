@@ -1,20 +1,25 @@
 module MiniLang (
     intLiteral,
     doubleLiteral,
+    parseMiniLang,
+    boolLiteral,
+    spaceConsumer,
+    declarationParser,
+    Declaration (..),
+    identifierName,
 ) where
 
-import Control.Applicative hiding (many, some)
 import Control.Monad.Combinators (choice)
 import Control.Monad.Combinators.Expr
 import Data.Text qualified as T
-import Relude hiding (Sum)
+import Relude hiding (Sum, many, some)
 import Relude.Unsafe as Unsafe
-import Text.Megaparsec (ErrorItem (..), MonadParsec (notFollowedBy, try), ParseError, Parsec, failure, parse, satisfy, single, unexpected, (<?>), (<|>))
-import Text.Megaparsec.Char (alphaNumChar, char, digitChar, letterChar, space, space1)
+import Text.Megaparsec
+import Text.Megaparsec.Char (alphaNumChar, digitChar, letterChar, newline, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Text.Megaparsec.Error (ErrorItem (Tokens))
+import Text.Megaparsec.Debug (dbg)
 
-type Program = [Statement]
+type Program = ([Declaration], [Statement])
 
 data Statement
     = StBlock [Statement]
@@ -27,7 +32,7 @@ data Statement
     | StWriteText Text
     | StReturn
     | StDeclaration Declaration
-    deriving (Show)
+    deriving (Eq, Show)
 
 type Identifier = Text
 
@@ -35,7 +40,7 @@ data Declaration
     = TypeBool Identifier
     | TypeInt Identifier
     | TypeDouble Identifier
-    deriving (Show)
+    deriving (Eq, Show)
 
 data Expression
     = -- unary, right
@@ -69,20 +74,40 @@ data Expression
     | IntLiteral Int
     | DoubleLiteral Double
     | BoolLiteral Bool
-    deriving (Show)
+    deriving (Eq, Show)
 
 type Parser = Parsec Void Text
 
 spaceConsumer :: Parser ()
-spaceConsumer = undefined
+spaceConsumer =
+    skipMany $
+        choice
+            [ space1
+            , comment
+            ]
+  where
+    comment :: Parser ()
+    comment = do
+        _ <- string "//"
+        _ <- skipManyTill anySingle "\n"
+        return ()
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme spaceConsumer
 
+symbol :: Text -> Parser Text
 symbol = L.symbol spaceConsumer
 
-identifier :: Parser Expression
-identifier = Identifier <$> (lexeme ident <?> "identifier")
+programParser :: Parser ()
+programParser = do
+    spaceConsumer
+    _ <- symbol "program"
+    _ <- symbol "{"
+    _ <- symbol "}"
+    return ()
+
+identifierP :: Parser Expression
+identifierP = Identifier <$> (lexeme ident <?> "identifier")
   where
     ident = do
         firstChar :: Char <- letterChar
@@ -92,19 +117,29 @@ identifier = Identifier <$> (lexeme ident <?> "identifier")
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-between open close p = open *> p <* close
-
+-- between :: Applicative f => f a1 -> f b -> f a2 -> f a2
+-- between open close p = open *> p <* close
+--
 pTerm :: Parser Expression
 pTerm =
     choice
         [ parens pExpr
-        , identifier
+        , identifierP
         , try intLiteral
         , doubleLiteral
+        , boolLiteral
         ]
+
+boolLiteral :: Parser Expression
+boolLiteral =
+    (string "true" $> BoolLiteral True)
+        <|> (string "false" $> BoolLiteral False)
 
 pExpr :: Parser Expression
 pExpr = makeExprParser pTerm operatorTable
+
+parseMiniLang :: Text -> Either (ParseErrorBundle Text Void) ()
+parseMiniLang = runParser programParser "input"
 
 operatorTable :: [[Operator Parser Expression]]
 operatorTable =
@@ -139,9 +174,9 @@ operatorTable =
         [ binaryL "||" LogicOr
         , binaryL "&&" LogicAnd
         ]
-    ,
-        [ binaryR "=" Assignment
-        ]
+        -- ,
+        --     [ binaryR "=" Assignment
+        --     ]
     ]
 
 binaryR :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
@@ -192,6 +227,26 @@ doubleLiteral = do
 
     toNumber :: [Char] -> Parser Expression
     toNumber = return . DoubleLiteral . Unsafe.read
+
+declarationParser :: Parser Declaration
+declarationParser =
+    choice
+        [ keyword "bool" *> (TypeBool <$> identifierName)
+        , keyword "int" *> (TypeInt <$> identifierName)
+        , keyword "double" *> (TypeDouble <$> identifierName)
+        ]
+        <* symbol ";"
+
+identifierName :: Parser Identifier
+identifierName = lexeme ident <?> "identifier"
+  where
+    ident = do
+        firstChar :: Char <- letterChar
+        rest <- many alphaNumChar
+        return . T.pack $ firstChar : rest
+
+keyword :: Text -> Parser ()
+keyword kw = symbol kw $> ()
 
 -- Elementami podstawowej wersji języka Mini są następujące terminale:
 -- - słowa kluczowe: program if else while read write return int double bool true false

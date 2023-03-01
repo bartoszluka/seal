@@ -34,6 +34,7 @@ library
       NoImplicitPrelude
       OverloadedStrings
       ImportQualifiedPost
+      ScopedTypeVariables
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
       base >=4.7 && <5
@@ -53,6 +54,7 @@ executable mini-lang-exe
       NoImplicitPrelude
       OverloadedStrings
       ImportQualifiedPost
+      ScopedTypeVariables
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -74,6 +76,7 @@ test-suite mini-lang-test
       NoImplicitPrelude
       OverloadedStrings
       ImportQualifiedPost
+      ScopedTypeVariables
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       HUnit
@@ -84,6 +87,7 @@ test-suite mini-lang-test
     , megaparsec
     , mini-lang
     , parser-combinators
+    , raw-strings-qq
     , relude
     , text
   default-language: Haskell2010

@@ -8,9 +8,10 @@ maintainer: bartoszluka1@gmail.com
 copyright: MIT
 
 default-extensions:
-- NoImplicitPrelude
-- OverloadedStrings
-- ImportQualifiedPost
+  - NoImplicitPrelude
+  - OverloadedStrings
+  - ImportQualifiedPost
+  - ScopedTypeVariables
 
 extra-source-files:
   - README.md
@@ -66,3 +67,4 @@ tests:
       - hspec-contrib
       - QuickCheck
       - HUnit
+      - raw-strings-qq
