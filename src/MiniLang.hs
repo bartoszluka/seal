@@ -4,9 +4,11 @@ module MiniLang (
     parseMiniLang,
     boolLiteral,
     spaceConsumer,
-    declarationParser,
+    declaration,
     Declaration (..),
     identifierName,
+    ParserError,
+    Parser,
 ) where
 
 import Control.Monad.Combinators (choice)
@@ -98,13 +100,15 @@ lexeme = L.lexeme spaceConsumer
 symbol :: Text -> Parser Text
 symbol = L.symbol spaceConsumer
 
-programParser :: Parser ()
+programParser :: Parser [Declaration]
 programParser = do
     spaceConsumer
     _ <- symbol "program"
     _ <- symbol "{"
+    declarations <- many declaration
     _ <- symbol "}"
-    return ()
+    eof
+    return declarations
 
 identifierP :: Parser Expression
 identifierP = Identifier <$> (lexeme ident <?> "identifier")
@@ -138,7 +142,9 @@ boolLiteral =
 pExpr :: Parser Expression
 pExpr = makeExprParser pTerm operatorTable
 
-parseMiniLang :: Text -> Either (ParseErrorBundle Text Void) ()
+type ParserError = ParseErrorBundle Text Void
+
+parseMiniLang :: Text -> Either ParserError [Declaration]
 parseMiniLang = runParser programParser "input"
 
 operatorTable :: [[Operator Parser Expression]]
@@ -228,8 +234,8 @@ doubleLiteral = do
     toNumber :: [Char] -> Parser Expression
     toNumber = return . DoubleLiteral . Unsafe.read
 
-declarationParser :: Parser Declaration
-declarationParser =
+declaration :: Parser Declaration
+declaration =
     choice
         [ keyword "bool" *> (TypeBool <$> identifierName)
         , keyword "int" *> (TypeInt <$> identifierName)
