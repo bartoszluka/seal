@@ -1,23 +1,24 @@
 module MiniLang (
-    intLiteral,
-    doubleLiteral,
-    parseMiniLang,
-    boolLiteral,
-    spaceConsumer,
-    declaration,
     Declaration (..),
-    identifierName,
-    ParserError,
+    Expression (..),
     Parser,
+    ParserError,
+    boolLiteral,
+    declaration,
+    doubleLiteral,
+    identifierName,
+    intLiteral,
+    parseMiniLang,
+    spaceConsumer,
+    pExpr,
 ) where
 
-import Control.Monad.Combinators (choice)
 import Control.Monad.Combinators.Expr
 import Data.Text qualified as T
 import Relude hiding (Sum, many, some)
 import Relude.Unsafe as Unsafe
 import Text.Megaparsec
-import Text.Megaparsec.Char (alphaNumChar, digitChar, letterChar, newline, space1, string)
+import Text.Megaparsec.Char (alphaNumChar, digitChar, letterChar, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
 import Text.Megaparsec.Debug (dbg)
 
@@ -58,7 +59,7 @@ data Expression
       Multiplication Expression Expression
     | Division Expression Expression
     | -- additive, left
-      Sum Expression Expression
+      Addition Expression Expression
     | Subtraction Expression Expression
     | -- relations, left
       GreaterThen Expression Expression
@@ -111,33 +112,31 @@ programParser = do
     return declarations
 
 identifierP :: Parser Expression
-identifierP = Identifier <$> (lexeme ident <?> "identifier")
-  where
-    ident = do
-        firstChar :: Char <- letterChar
-        rest <- many alphaNumChar
-        return . T.pack $ firstChar : rest
+identifierP = Identifier <$> identifierName
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
--- between :: Applicative f => f a1 -> f b -> f a2 -> f a2
--- between open close p = open *> p <* close
---
 pTerm :: Parser Expression
 pTerm =
-    choice
-        [ parens pExpr
-        , identifierP
-        , try intLiteral
-        , doubleLiteral
-        , boolLiteral
-        ]
+    lexeme $
+        choice
+            [ parens pExpr
+            , identifierP
+            , try doubleLiteral
+            , intLiteral
+            , boolLiteral
+            ]
 
 boolLiteral :: Parser Expression
 boolLiteral =
-    (string "true" $> BoolLiteral True)
-        <|> (string "false" $> BoolLiteral False)
+    lexeme
+        ( choice
+            [ string "true" $> BoolLiteral True
+            , string "false" $> BoolLiteral False
+            ]
+            <?> "bool"
+        )
 
 pExpr :: Parser Expression
 pExpr = makeExprParser pTerm operatorTable
@@ -165,7 +164,7 @@ operatorTable =
         , binaryL "/" Division
         ]
     ,
-        [ binaryL "+" Sum
+        [ binaryL "+" Addition
         , binaryL "-" Subtraction
         ]
     ,
@@ -195,7 +194,7 @@ prefix :: Text -> (Expression -> Expression) -> Operator Parser Expression
 prefix name f = Prefix (f <$ symbol name)
 
 intLiteral :: Parser Expression
-intLiteral = (try zeroParser <|> otherNumberParser) <?> "integer"
+intLiteral = lexeme (try zeroParser <|> otherNumberParser) <?> "integer"
   where
     zeroParser :: Parser Expression
     zeroParser = do
@@ -206,7 +205,7 @@ intLiteral = (try zeroParser <|> otherNumberParser) <?> "integer"
     otherNumberParser :: Parser Expression
     otherNumberParser = do
         firstDigit <- satisfy (`elem` ['1' .. '9'])
-        rest <- some digitChar
+        rest <- many digitChar
         toNumber $ firstDigit : rest
 
     toNumber :: [Char] -> Parser Expression
@@ -217,7 +216,7 @@ doubleLiteral = do
     beforeDot <- try zeroParser <|> otherNumberParser
     _ <- single '.'
     afterDot <- some digitChar
-    toNumber (beforeDot ++ "." ++ afterDot) <?> "double"
+    lexeme (toNumber (beforeDot ++ "." ++ afterDot) <?> "double")
   where
     zeroParser :: Parser String
     zeroParser = do
@@ -228,7 +227,7 @@ doubleLiteral = do
     otherNumberParser :: Parser String
     otherNumberParser = do
         firstDigit <- satisfy (`elem` ['1' .. '9'])
-        rest <- some digitChar
+        rest <- many digitChar
         return $ firstDigit : rest
 
     toNumber :: [Char] -> Parser Expression
