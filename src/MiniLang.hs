@@ -11,6 +11,8 @@ module MiniLang (
     parseMiniLang,
     spaceConsumer,
     pExpr,
+    unaryOp,
+    Program,
 ) where
 
 import Control.Monad.Combinators.Expr
@@ -20,7 +22,6 @@ import Relude.Unsafe as Unsafe
 import Text.Megaparsec
 import Text.Megaparsec.Char (alphaNumChar, digitChar, letterChar, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Text.Megaparsec.Debug (dbg)
 
 type Program = ([Declaration], [Statement])
 
@@ -121,12 +122,35 @@ pTerm :: Parser Expression
 pTerm =
     lexeme $
         choice
-            [ parens pExpr
-            , identifierP
+            [ boolLiteral
             , try doubleLiteral
             , intLiteral
-            , boolLiteral
+            , identifierP
+            , unaryOp
+            , parens pTerm
             ]
+
+unaryOp :: Parser Expression
+unaryOp = do
+    operators <- allOperatos
+    expr <- bitwise
+    return $ foldr ($) expr operators
+  where
+    allOperatos =
+        some $
+            choice
+                [ op "-" UnaryMinus
+                , op "~" BitwiseNeg
+                , op "!" LogicalNeg
+                , try $ cast "int" IntCast
+                , cast "double" DoubleCast
+                ]
+    op sign constructor = symbol sign $> constructor
+    cast typeTo constructor = parens (symbol typeTo) $> constructor
+
+-- TODO: use actual logic here
+bitwise :: Parser Expression
+bitwise = identifierP
 
 boolLiteral :: Parser Expression
 boolLiteral =
@@ -179,13 +203,7 @@ operatorTable =
         [ binaryL "||" LogicOr
         , binaryL "&&" LogicAnd
         ]
-        -- ,
-        --     [ binaryR "=" Assignment
-        --     ]
     ]
-
-binaryR :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
-binaryR name f = InfixR (f <$ symbol name)
 
 binaryL :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
 binaryL name f = InfixL (f <$ symbol name)

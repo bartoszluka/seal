@@ -19,6 +19,7 @@ import MiniLang (
     intLiteral,
     pExpr,
     parseMiniLang,
+    unaryOp,
  )
 import Test.Hspec.QuickCheck (prop)
 import Text.Printf
@@ -130,6 +131,15 @@ main = hspec $ do
                          in parseEither doubleLiteral (T.pack $ printf "%f" positive)
                                 `shouldBe` Right (DoubleLiteral positive)
             describe "operators" $ do
+                describe "unary" $ do
+                    it "parses an int cast" $
+                        parseEither unaryOp "(int) a"
+                            `shouldBe` Right (IntCast (Identifier "a"))
+
+                    it "parses a combination of unary operators with right associativity" $
+                        parseEither unaryOp "- ~ !! ( int  ) -  (   double ) a  "
+                            `shouldBe` Right (UnaryMinus (BitwiseNeg (LogicalNeg (LogicalNeg (IntCast (UnaryMinus (DoubleCast (Identifier "a"))))))))
+
                 it "parses adding 2 numbers" $
                     parseEither pExpr "0   + 6.9 " `shouldBe` Right (Addition (IntLiteral 0) (DoubleLiteral 6.9))
                 it "parses comparing 2 numbers" $
@@ -141,8 +151,7 @@ main = hspec $ do
                                 (Identifier "a")
                                 ( Multiplication
                                     (IntLiteral 2)
-                                    ( IntLiteral 3
-                                    )
+                                    (IntLiteral 3)
                                 )
                             )
                 it "parses overriding precedence with parens" $
@@ -154,4 +163,24 @@ main = hspec $ do
                                     (IntLiteral 2)
                                 )
                                 (IntLiteral 3)
+                            )
+                it "parses logic operators" $
+                    parseEither pExpr "a || true && false   "
+                        `shouldBe` Right
+                            ( LogicAnd
+                                ( LogicOr
+                                    (Identifier "a")
+                                    (BoolLiteral True)
+                                )
+                                (BoolLiteral False)
+                            )
+                it "distinguishes logic and bitwise operators" $
+                    parseEither pExpr " a | b || c & d && true"
+                        `shouldBe` Right
+                            ( LogicAnd
+                                ( LogicOr
+                                    (BitwiseSum (Identifier "a") (Identifier "b"))
+                                    (BitwiseMult (Identifier "c") (Identifier "d"))
+                                )
+                                (BoolLiteral True)
                             )
