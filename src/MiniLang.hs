@@ -3,16 +3,17 @@ module MiniLang (
     Expression (..),
     Parser,
     ParserError,
+    Program,
+    bitwise,
     boolLiteral,
     declaration,
     doubleLiteral,
     identifierName,
     intLiteral,
+    pExpr,
     parseMiniLang,
     spaceConsumer,
-    pExpr,
     unaryOp,
-    Program,
 ) where
 
 import Control.Monad.Combinators.Expr
@@ -127,13 +128,14 @@ pTerm =
             , intLiteral
             , identifierP
             , unaryOp
+            , bitwise
             , parens pTerm
             ]
 
 unaryOp :: Parser Expression
 unaryOp = do
     operators <- allOperatos
-    expr <- bitwise
+    expr <- pTerm
     return $ foldr ($) expr operators
   where
     allOperatos =
@@ -148,9 +150,26 @@ unaryOp = do
     op sign constructor = symbol sign $> constructor
     cast typeTo constructor = parens (symbol typeTo) $> constructor
 
--- TODO: use actual logic here
 bitwise :: Parser Expression
-bitwise = identifierP
+bitwise = do
+    leftSide <- pTerm
+    rightSide <- some opAndTerm
+    return $
+        foldl'
+            (\termLeft (op, termRight) -> termLeft `op` termRight)
+            leftSide
+            rightSide
+  where
+    opAndTerm = do
+        operator <- ops
+        rightSide <- pTerm
+        return (operator, rightSide)
+    ops :: Parser (Expression -> Expression -> Expression)
+    ops =
+        choice
+            [ symbol "|" $> BitwiseSum
+            , symbol "&" $> BitwiseMult
+            ]
 
 boolLiteral :: Parser Expression
 boolLiteral =
