@@ -1,37 +1,51 @@
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use <$>" #-}
+
 module MiniLang (
     Declaration (..),
     Expression (..),
     Parser,
     ParserError,
     Program,
+    Statement (..),
     bitwise,
+    stIf,
     boolLiteral,
     declaration,
     doubleLiteral,
     identifierName,
     intLiteral,
+    multiplicative,
     pExpr,
+    pTerm,
     parseMiniLang,
+    programParser,
+    readP,
+    returnP,
     spaceConsumer,
+    stExpression,
     unaryOp,
+    writeExpr,
+    writeText,
 ) where
 
-import Control.Monad.Combinators.Expr
 import Data.Text qualified as T
 import Relude hiding (Sum, many, some)
 import Relude.Unsafe as Unsafe
 import Text.Megaparsec
-import Text.Megaparsec.Char (alphaNumChar, digitChar, letterChar, space1, string)
+import Text.Megaparsec.Char (alphaNumChar, char, digitChar, letterChar, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
+import Text.Megaparsec.Debug (dbg)
 
 type Program = ([Declaration], [Statement])
 
 data Statement
     = StBlock [Statement]
     | StExpression Expression
-    | StIf Expression [Statement]
-    | StIfElse Expression [Statement] [Statement]
-    | StWhile Expression [Statement]
+    | StIf Expression Statement
+    | StIfElse Expression Statement Statement
+    | StWhile Expression Statement
     | StRead Identifier
     | StWriteExpr Expression
     | StWriteText Text
@@ -87,8 +101,8 @@ spaceConsumer :: Parser ()
 spaceConsumer =
     skipMany $
         choice
-            [ space1
-            , comment
+            [ hidden space1
+            , hidden comment
             ]
   where
     comment :: Parser ()
@@ -103,72 +117,135 @@ lexeme = L.lexeme spaceConsumer
 symbol :: Text -> Parser Text
 symbol = L.symbol spaceConsumer
 
-programParser :: Parser [Declaration]
+programParser :: Parser ([Declaration], [Statement])
 programParser = do
     spaceConsumer
     _ <- symbol "program"
     _ <- symbol "{"
     declarations <- many declaration
+    statements <- many statement
     _ <- symbol "}"
     eof
-    return declarations
+    return (declarations, statements)
 
-identifierP :: Parser Expression
-identifierP = Identifier <$> identifierName
+identifier :: Parser Expression
+identifier = Identifier <$> identifierName
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
+
+-- FIXME: precedence
+pExpr :: Parser Expression
+pExpr = do
+    firstTerm <- pTerm
+    rest <- many ops
+    return $ foldl' (&) firstTerm rest
+  where
+    ops :: Parser (Expression -> Expression)
+    ops =
+        choice
+            [ bitwise
+            , multiplicative
+            , additive
+            ]
 
 pTerm :: Parser Expression
 pTerm =
     lexeme $
         choice
-            [ boolLiteral
+            [ try unaryOp
+            , boolLiteral
             , try doubleLiteral
             , intLiteral
-            , identifierP
-            , unaryOp
-            , bitwise
-            , parens pTerm
+            , identifier
+            , parens pExpr
             ]
 
 unaryOp :: Parser Expression
 unaryOp = do
-    operators <- allOperatos
-    expr <- pTerm
-    return $ foldr ($) expr operators
+    operators <- some allOperatos
+    operand <- pTerm
+    return $ foldr ($) operand operators
   where
     allOperatos =
-        some $
-            choice
-                [ op "-" UnaryMinus
-                , op "~" BitwiseNeg
-                , op "!" LogicalNeg
-                , try $ cast "int" IntCast
-                , cast "double" DoubleCast
-                ]
+        choice
+            [ op "-" UnaryMinus
+            , op "~" BitwiseNeg
+            , op "!" LogicalNeg
+            , try $ cast "int" IntCast
+            , try $ cast "double" DoubleCast
+            ]
     op sign constructor = symbol sign $> constructor
     cast typeTo constructor = parens (symbol typeTo) $> constructor
 
-bitwise :: Parser Expression
-bitwise = do
-    leftSide <- pTerm
-    rightSide <- some opAndTerm
-    return $
-        foldl'
-            (\termLeft (op, termRight) -> termLeft `op` termRight)
-            leftSide
-            rightSide
+bitwise :: Parser (Expression -> Expression)
+bitwise = leftAssociative operators pTerm
   where
-    opAndTerm = do
-        operator <- ops
-        rightSide <- pTerm
-        return (operator, rightSide)
-    ops :: Parser (Expression -> Expression -> Expression)
-    ops =
+    operators :: Parser (Expression -> Expression -> Expression)
+    operators =
         choice
             [ symbol "|" $> BitwiseSum
             , symbol "&" $> BitwiseMult
+            ]
+
+rightAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser Expression
+rightAssociative ops termP = do
+    lastTerm <- termP
+    leftSide <- many termAndOp
+    return $
+        foldr ($) lastTerm leftSide
+  where
+    termAndOp :: Parser (Expression -> Expression)
+    termAndOp = do
+        leftSide <- undefined -- TODO: recursion
+        operator <- ops
+        return $ \r -> leftSide `operator` r
+
+-- leftAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser Expression
+-- leftAssociative ops termP = do
+--     -- leftSide <- termP
+--     rightSide <- many opAndTerm
+--     return $
+--         foldl'
+--             (\termLeft (op, termRight) -> termLeft `op` termRight)
+--             leftSide
+--             rightSide
+--   where
+--     opAndTerm = do
+--         operator <- ops
+--         rightSide <- termP
+--         return (operator, rightSide)
+
+leftAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser (Expression -> Expression)
+leftAssociative ops termP = do
+    operator <- ops
+    rightSide <- termP
+    return (`operator` rightSide)
+
+-- ops :: Parser (Expression -> Expression -> Expression)
+-- ops =
+--     choice
+--         [ symbol "*" $> Multiplication
+--         , symbol "/" $> Division
+--         ]
+
+multiplicative :: Parser (Expression -> Expression)
+multiplicative = leftAssociative ops pTerm
+  where
+    ops :: Parser (Expression -> Expression -> Expression)
+    ops =
+        choice
+            [ symbol "*" $> Multiplication
+            , symbol "/" $> Division
+            ]
+additive :: Parser (Expression -> Expression)
+additive = leftAssociative ops pTerm
+  where
+    ops :: Parser (Expression -> Expression -> Expression)
+    ops =
+        choice
+            [ symbol "+" $> Addition
+            , symbol "-" $> Subtraction
             ]
 
 boolLiteral :: Parser Expression
@@ -181,79 +258,110 @@ boolLiteral =
             <?> "bool"
         )
 
-pExpr :: Parser Expression
-pExpr = makeExprParser pTerm operatorTable
-
 type ParserError = ParseErrorBundle Text Void
 
-parseMiniLang :: Text -> Either ParserError [Declaration]
+parseMiniLang :: Text -> Either ParserError ([Declaration], [Statement])
 parseMiniLang = runParser programParser "input"
 
-operatorTable :: [[Operator Parser Expression]]
-operatorTable =
-    [
-        [ prefix "-" UnaryMinus
-        , prefix "~" BitwiseNeg
-        , prefix "!" LogicalNeg
-        , prefix "(int)" IntCast
-        , prefix "(double)" DoubleCast
-        ]
-    ,
-        [ binaryL "|" BitwiseSum
-        , binaryL "&" BitwiseMult
-        ]
-    ,
-        [ binaryL "*" Multiplication
-        , binaryL "/" Division
-        ]
-    ,
-        [ binaryL "+" Addition
-        , binaryL "-" Subtraction
-        ]
-    ,
-        [ binaryL ">" GreaterThen
-        , binaryL ">=" GreaterThenEq
-        , binaryL "<" LessThen
-        , binaryL "<=" LessThenEq
-        , binaryL "==" Equal
-        , binaryL "!=" NotEqual
-        ]
-    ,
-        [ binaryL "||" LogicOr
-        , binaryL "&&" LogicAnd
-        ]
-    ]
+writeExpr :: Parser Statement
+writeExpr = do
+    keyword "write"
+    expression <- pExpr
+    keyword ";"
+    return $ StWriteExpr expression
 
-binaryL :: Text -> (Expression -> Expression -> Expression) -> Operator Parser Expression
-binaryL name f = InfixL (f <$ symbol name)
+writeText :: Parser Statement
+writeText = do
+    keyword "write"
+    text <- stringLiteral
+    keyword ";"
+    return $ StWriteText text
 
-prefix :: Text -> (Expression -> Expression) -> Operator Parser Expression
-prefix name f = Prefix (f <$ symbol name)
+stringLiteral :: Parser Text
+stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"') <&> T.pack
+
+readP :: Parser Statement
+readP = do
+    keyword "read"
+    ident <- identifierName
+    keyword ";"
+    return $ StRead ident
+
+returnP :: Parser Statement
+returnP = keyword "return" *> keyword ";" $> StReturn
+
+stExpression :: Parser Statement
+stExpression = do
+    expr <- pExpr
+    keyword ";"
+    return $ StExpression expr
+
+stBlock :: Parser Statement
+stBlock = do
+    keyword "{"
+    st <- many statement
+    keyword "}"
+    return $ StBlock st
+
+stDeclaration :: Parser Statement
+stDeclaration = StDeclaration <$> declaration
+
+statement :: Parser Statement
+statement =
+    choice
+        [ stBlock
+        , try writeText
+        , writeExpr
+        , stIf
+        , stWhile
+        , readP
+        , returnP
+        , stDeclaration
+        , stExpression
+        ]
+
+stWhile :: Parser Statement
+stWhile = do
+    keyword "while"
+    condition <- parens pExpr
+    StWhile condition <$> statement
+
+stIf :: Parser Statement
+stIf = do
+    keyword "if"
+    condition <- parens pExpr
+    StIf condition <$> statement
+
+-- "*" Multiplication
+-- "/" Division
+--
+-- "+" Addition
+-- "-" Subtraction
+--
+-- ">" GreaterThen
+-- ">=" GreaterThenEq
+-- "<" LessThen
+-- "<=" LessThenEq
+-- "==" Equal
+-- "!=" NotEqual
+--
+-- "||" LogicOr
+-- "&&" LogicAnd
 
 intLiteral :: Parser Expression
-intLiteral = lexeme (try zeroParser <|> otherNumberParser) <?> "integer"
-  where
-    zeroParser :: Parser Expression
-    zeroParser = do
-        zero <- single '0'
-        notFollowedBy otherNumberParser
-        toNumber [zero]
-
-    otherNumberParser :: Parser Expression
-    otherNumberParser = do
-        firstDigit <- satisfy (`elem` ['1' .. '9'])
-        rest <- many digitChar
-        toNumber $ firstDigit : rest
-
-    toNumber :: [Char] -> Parser Expression
-    toNumber = return . IntLiteral . Unsafe.read
+intLiteral = do
+    intString <- intParser
+    lexeme (toNumber IntLiteral intString)
 
 doubleLiteral :: Parser Expression
 doubleLiteral = do
-    beforeDot <- try zeroParser <|> otherNumberParser
+    beforeDot <- intParser
     _ <- single '.'
     afterDot <- some digitChar
-    lexeme (toNumber (beforeDot ++ "." ++ afterDot) <?> "double")
+    lexeme $ label "double" $ toNumber DoubleLiteral (beforeDot ++ "." ++ afterDot)
+
+intParser :: Parser String
+intParser = label "number" $ try zeroParser <|> otherNumberParser
   where
     zeroParser :: Parser String
     zeroParser = do
@@ -267,8 +375,8 @@ doubleLiteral = do
         rest <- many digitChar
         return $ firstDigit : rest
 
-    toNumber :: [Char] -> Parser Expression
-    toNumber = return . DoubleLiteral . Unsafe.read
+toNumber :: (Read n) => (n -> Expression) -> String -> Parser Expression
+toNumber constructor = return . constructor . Unsafe.read
 
 declaration :: Parser Declaration
 declaration =
