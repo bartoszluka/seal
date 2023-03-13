@@ -9,15 +9,12 @@ module MiniLang (
     ParserError,
     Program,
     Statement (..),
-    bitwise,
     stIf,
     boolLiteral,
     declaration,
     doubleLiteral,
     identifierName,
     intLiteral,
-    multiplicative,
-    pExpr,
     pTerm,
     parseMiniLang,
     programParser,
@@ -28,6 +25,7 @@ module MiniLang (
     unaryOp,
     writeExpr,
     writeText,
+    expression,
 ) where
 
 import Data.Text qualified as T
@@ -36,7 +34,6 @@ import Relude.Unsafe as Unsafe
 import Text.Megaparsec
 import Text.Megaparsec.Char (alphaNumChar, char, digitChar, letterChar, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
-import Text.Megaparsec.Debug (dbg)
 
 type Program = ([Declaration], [Statement])
 
@@ -134,32 +131,70 @@ identifier = Identifier <$> identifierName
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
--- FIXME: precedence
-pExpr :: Parser Expression
-pExpr = do
-    firstTerm <- pTerm
-    rest <- many ops
-    return $ foldl' (&) firstTerm rest
+expression :: Parser Expression
+expression = binaries
   where
-    ops :: Parser (Expression -> Expression)
-    ops =
-        choice
-            [ bitwise
-            , multiplicative
-            , additive
+    binaries = foldr binOp value operatorPrecedence
+    operatorPrecedence =
+        -- from lowest to highest precedence
+        [
+            [ symbol "||" $> LogicOr
+            , symbol "&&" $> LogicAnd
             ]
+        ,
+            [ symbol ">" $> GreaterThen
+            , symbol ">=" $> GreaterThenEq
+            , symbol "<" $> LessThen
+            , symbol "<=" $> LessThenEq
+            , symbol "==" $> Equal
+            , symbol "!=" $> NotEqual
+            ]
+        ,
+            [ symbol "+" $> Addition
+            , symbol "-" $> Subtraction
+            ]
+        ,
+            [ symbol "*" $> Multiplication
+            , symbol "/" $> Division
+            ]
+        ,
+            [ single' '|' $> BitwiseSum
+            , single' '&' $> BitwiseMult
+            ]
+        ]
+    single' c = lexeme $ try $ char c *> notFollowedBy (char c)
+    value = pTerm
+    binOp ::
+        [Parser (Expression -> Expression -> Expression)] ->
+        Parser Expression ->
+        Parser Expression
+    binOp operators higherPrec = do
+        left <- higherPrec
+        right <- many rest
+        return $ foldl' (\l (op, r) -> l `op` r) left right
+      where
+        rest = do
+            op <- choice operators
+            right <- higherPrec
+            return (op, right)
 
 pTerm :: Parser Expression
 pTerm =
     lexeme $
-        choice
-            [ try unaryOp
-            , boolLiteral
-            , try doubleLiteral
-            , intLiteral
-            , identifier
-            , parens pExpr
-            ]
+        choice $
+            concat
+                [ [try unaryOp]
+                , terminals
+                , [parens expression]
+                ]
+
+terminals :: [Parser Expression]
+terminals =
+    [ boolLiteral
+    , try doubleLiteral
+    , intLiteral
+    , identifier
+    ]
 
 unaryOp :: Parser Expression
 unaryOp = do
@@ -177,76 +212,6 @@ unaryOp = do
             ]
     op sign constructor = symbol sign $> constructor
     cast typeTo constructor = parens (symbol typeTo) $> constructor
-
-bitwise :: Parser (Expression -> Expression)
-bitwise = leftAssociative operators pTerm
-  where
-    operators :: Parser (Expression -> Expression -> Expression)
-    operators =
-        choice
-            [ symbol "|" $> BitwiseSum
-            , symbol "&" $> BitwiseMult
-            ]
-
-rightAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser Expression
-rightAssociative ops termP = do
-    lastTerm <- termP
-    leftSide <- many termAndOp
-    return $
-        foldr ($) lastTerm leftSide
-  where
-    termAndOp :: Parser (Expression -> Expression)
-    termAndOp = do
-        leftSide <- undefined -- TODO: recursion
-        operator <- ops
-        return $ \r -> leftSide `operator` r
-
--- leftAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser Expression
--- leftAssociative ops termP = do
---     -- leftSide <- termP
---     rightSide <- many opAndTerm
---     return $
---         foldl'
---             (\termLeft (op, termRight) -> termLeft `op` termRight)
---             leftSide
---             rightSide
---   where
---     opAndTerm = do
---         operator <- ops
---         rightSide <- termP
---         return (operator, rightSide)
-
-leftAssociative :: Parser (Expression -> Expression -> Expression) -> Parser Expression -> Parser (Expression -> Expression)
-leftAssociative ops termP = do
-    operator <- ops
-    rightSide <- termP
-    return (`operator` rightSide)
-
--- ops :: Parser (Expression -> Expression -> Expression)
--- ops =
---     choice
---         [ symbol "*" $> Multiplication
---         , symbol "/" $> Division
---         ]
-
-multiplicative :: Parser (Expression -> Expression)
-multiplicative = leftAssociative ops pTerm
-  where
-    ops :: Parser (Expression -> Expression -> Expression)
-    ops =
-        choice
-            [ symbol "*" $> Multiplication
-            , symbol "/" $> Division
-            ]
-additive :: Parser (Expression -> Expression)
-additive = leftAssociative ops pTerm
-  where
-    ops :: Parser (Expression -> Expression -> Expression)
-    ops =
-        choice
-            [ symbol "+" $> Addition
-            , symbol "-" $> Subtraction
-            ]
 
 boolLiteral :: Parser Expression
 boolLiteral =
@@ -266,9 +231,9 @@ parseMiniLang = runParser programParser "input"
 writeExpr :: Parser Statement
 writeExpr = do
     keyword "write"
-    expression <- pExpr
+    expr <- expression
     keyword ";"
-    return $ StWriteExpr expression
+    return $ StWriteExpr expr
 
 writeText :: Parser Statement
 writeText = do
@@ -292,7 +257,7 @@ returnP = keyword "return" *> keyword ";" $> StReturn
 
 stExpression :: Parser Statement
 stExpression = do
-    expr <- pExpr
+    expr <- expression
     keyword ";"
     return $ StExpression expr
 
@@ -323,30 +288,14 @@ statement =
 stWhile :: Parser Statement
 stWhile = do
     keyword "while"
-    condition <- parens pExpr
+    condition <- parens expression
     StWhile condition <$> statement
 
 stIf :: Parser Statement
 stIf = do
     keyword "if"
-    condition <- parens pExpr
+    condition <- parens expression
     StIf condition <$> statement
-
--- "*" Multiplication
--- "/" Division
---
--- "+" Addition
--- "-" Subtraction
---
--- ">" GreaterThen
--- ">=" GreaterThenEq
--- "<" LessThen
--- "<=" LessThenEq
--- "==" Equal
--- "!=" NotEqual
---
--- "||" LogicOr
--- "&&" LogicAnd
 
 intLiteral :: Parser Expression
 intLiteral = do
@@ -397,8 +346,3 @@ identifierName = lexeme ident <?> "identifier"
 
 keyword :: Text -> Parser ()
 keyword kw = symbol kw $> ()
-
--- Elementami podstawowej wersji języka Mini są następujące terminale:
--- - słowa kluczowe: program if else while read write return int double bool true false
--- - operatory i symbole specjalne: = || && | & == != > >= < <= + - * / ! ~ ( ) { } ;
--- - identyfikatory i liczby

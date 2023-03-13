@@ -1,9 +1,9 @@
 module Main (main) where
 
-import MiniLang ()
+import MiniLang (expression)
 import Relude
+import Text.Megaparsec
 
 main :: IO ()
 main = do
-    args <- getArgs
-    print args
+    parseTest (expression <* eof) "a | b || c & d && true"

@@ -13,15 +13,13 @@ import MiniLang (
     Expression (..),
     Parser,
     Statement (..),
-    bitwise,
     boolLiteral,
     declaration,
     doubleLiteral,
     identifierName,
     intLiteral,
-    pExpr,
+    expression,
     parseMiniLang,
-    unaryOp,
  )
 import Test.Hspec.QuickCheck (prop)
 import Text.Printf
@@ -192,27 +190,27 @@ main = hspec $ do
             describe "operators" $ do
                 describe "unary" $ do
                     it "parses an int cast" $
-                        parseEither unaryOp "(int) a"
+                        parseEither expression "(int) a"
                             `shouldBe` Right (IntCast (Identifier "a"))
 
                     it "parses a combination of unary operators with right associativity" $
-                        parseEither unaryOp "- ~ !! ( int  ) -  (   double ) a  "
+                        parseEither expression "- ~ !! ( int  ) -  (   double ) a  "
                             `shouldBe` Right (UnaryMinus (BitwiseNeg (LogicalNeg (LogicalNeg (IntCast (UnaryMinus (DoubleCast (Identifier "a"))))))))
 
                     it "does not parse if there is no expression on the right" $
-                        parseEither unaryOp "!(int)"
+                        parseEither expression "!(int)"
                             `shouldSatisfy` isLeft
                 describe "bitwise binary" $ do
                     it "parses a bitwise multiplication operator" $
-                        parseEither bitwise "a & b"
+                        parseEither expression "a & b"
                             `shouldBe` Right (BitwiseMult (Identifier "a") (Identifier "b"))
 
                     it "parses a bitwise sum operator" $
-                        parseEither bitwise "a | b"
+                        parseEither expression "a | b"
                             `shouldBe` Right (BitwiseSum (Identifier "a") (Identifier "b"))
 
                     it "operations are left-associative" $
-                        parseEither bitwise "1 | 2 & 3"
+                        parseEither expression "1 | 2 & 3"
                             `shouldBe` Right
                                 ( BitwiseMult
                                     (BitwiseSum (IntLiteral 1) (IntLiteral 2))
@@ -220,23 +218,23 @@ main = hspec $ do
                                 )
 
                     it "parses bitwise and unary operators in the same expression" $
-                        parseEither bitwise "1 | - 3 & ~false"
+                        parseEither expression "1 | - 3 & ~false"
                             `shouldBe` Right
                                 ( BitwiseMult
                                     (BitwiseSum (IntLiteral 1) (UnaryMinus (IntLiteral 3)))
                                     (BitwiseNeg (BoolLiteral False))
                                 )
                     it "allows overriding precedence with parens" $
-                        parseEither pExpr "!(1 | 2)"
+                        parseEither expression "!(1 | 2)"
                             `shouldBe` Right
                                 (LogicalNeg (BitwiseSum (IntLiteral 1) (IntLiteral 2)))
 
                 it "parses adding 2 numbers" $
-                    parseEither pExpr "0   + 6.9 " `shouldBe` Right (Addition (IntLiteral 0) (DoubleLiteral 6.9))
-                xit "parses comparing 2 numbers" $
-                    parseEither pExpr "1>0" `shouldBe` Right (GreaterThen (IntLiteral 1) (IntLiteral 0))
-                xit "parses addition and multiplication precedence" $
-                    parseEither pExpr "a   +2*3"
+                    parseEither expression "0   + 6.9 " `shouldBe` Right (Addition (IntLiteral 0) (DoubleLiteral 6.9))
+                it "parses comparing 2 numbers" $
+                    parseEither expression "1>0" `shouldBe` Right (GreaterThen (IntLiteral 1) (IntLiteral 0))
+                it "parses addition and multiplication precedence" $
+                    parseEither expression "a   +2*3"
                         `shouldBe` Right
                             ( Addition
                                 (Identifier "a")
@@ -246,7 +244,7 @@ main = hspec $ do
                                 )
                             )
                 it "parses overriding precedence with parens" $
-                    parseEither pExpr "(a+2)*3"
+                    parseEither expression "(a+2)*3"
                         `shouldBe` Right
                             ( Multiplication
                                 ( Addition
@@ -255,8 +253,8 @@ main = hspec $ do
                                 )
                                 (IntLiteral 3)
                             )
-                xit "parses logic operators" $
-                    parseEither pExpr "a || true && false   "
+                it "parses logic operators" $
+                    parseEither expression "a || true && false   "
                         `shouldBe` Right
                             ( LogicAnd
                                 ( LogicOr
@@ -265,8 +263,8 @@ main = hspec $ do
                                 )
                                 (BoolLiteral False)
                             )
-                xit "distinguishes logic and bitwise operators" $
-                    parseEither pExpr " a | b || c & d && true"
+                it "distinguishes logic and bitwise operators" $
+                    parseEither expression "a | b || c & d && true"
                         `shouldBe` Right
                             ( LogicAnd
                                 ( LogicOr
