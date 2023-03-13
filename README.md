@@ -7,8 +7,9 @@ A compiler for the mini language.
 TODO list of features:
 
 - [x] empty program
-- [ ] statements
-- [ ] expressions
-- [ ] operator precedence
+- [x] statements
+- [x] expressions
+- [x] operator precedence
+- [x] if-else statements
 - [ ] interpreter
 - [ ] compiler

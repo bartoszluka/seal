@@ -84,8 +84,6 @@ data Expression
     | -- logical, left
       LogicOr Expression Expression
     | LogicAnd Expression Expression
-    | -- assignment, right
-      Assignment Identifier Expression
     | Identifier Identifier
     | IntLiteral Int
     | DoubleLiteral Double
@@ -295,7 +293,14 @@ stIf :: Parser Statement
 stIf = do
     keyword "if"
     condition <- parens expression
-    StIf condition <$> statement
+    st <- statement
+    elseSt <- optional elseStatement
+    return $ case elseSt of
+        Just el -> StIfElse condition st el
+        Nothing -> StIf condition st
+  where
+    elseStatement :: Parser Statement
+    elseStatement = keyword "else" *> statement
 
 intLiteral :: Parser Expression
 intLiteral = do

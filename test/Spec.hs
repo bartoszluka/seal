@@ -2,12 +2,12 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+import Data.Text qualified as T
 import Relude
 import Test.Hspec
 import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream, eof, parse, parseErrorPretty, parseMaybe)
 import Text.RawString.QQ
 
-import Data.Text qualified as T
 import MiniLang (
     Declaration (..),
     Expression (..),
@@ -16,9 +16,9 @@ import MiniLang (
     boolLiteral,
     declaration,
     doubleLiteral,
+    expression,
     identifierName,
     intLiteral,
-    expression,
     parseMiniLang,
  )
 import Test.Hspec.QuickCheck (prop)
@@ -115,7 +115,48 @@ main = hspec $ do
                         }
                     |]
                     `shouldBe` Right ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
-
+            it "parses a program with an if-else statement" $ do
+                parseMiniLang
+                    [r| program 
+                        {
+                             if(harryPotter)
+                                 read anotherBook;
+                             else
+                                 allGood;
+                        }
+                    |]
+                    `shouldBe` Right
+                        ( []
+                        ,
+                            [ StIfElse
+                                (Identifier "harryPotter")
+                                (StRead "anotherBook")
+                                (StExpression (Identifier "allGood"))
+                            ]
+                        )
+            it "parses a program with a nested if-else statement" $ do
+                parseMiniLang
+                    [r| program 
+                        {
+                             if(harryPotter)
+                                 if(count>2)
+                                     read anotherBook;
+                                 else
+                                     allGood;
+                        }
+                    |]
+                    `shouldBe` Right
+                        ( []
+                        ,
+                            [ StIf
+                                (Identifier "harryPotter")
+                                ( StIfElse
+                                    (GreaterThen (Identifier "count") (IntLiteral 2))
+                                    (StRead "anotherBook")
+                                    (StExpression (Identifier "allGood"))
+                                )
+                            ]
+                        )
             it "parses a program with a while statement" $ do
                 parseMiniLang
                     [r| program 
@@ -272,4 +313,23 @@ main = hspec $ do
                                     (BitwiseMult (Identifier "c") (Identifier "d"))
                                 )
                                 (BoolLiteral True)
+                            )
+                it "parses all operators with correct precedence" $
+                    parseEither expression "a || b != c + d / e & f"
+                        `shouldBe` Right
+                            ( LogicOr
+                                (Identifier "a")
+                                ( NotEqual
+                                    (Identifier "b")
+                                    ( Addition
+                                        (Identifier "c")
+                                        ( Division
+                                            (Identifier "d")
+                                            ( BitwiseMult
+                                                (Identifier "e")
+                                                (Identifier "f")
+                                            )
+                                        )
+                                    )
+                                )
                             )
