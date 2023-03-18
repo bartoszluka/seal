@@ -5,27 +5,28 @@
 module MiniLang (
     Declaration (..),
     Expression (..),
+    Identifier,
     Parser,
     ParserError,
     Program,
     Statement (..),
-    stIf,
     boolLiteral,
     declaration,
     doubleLiteral,
+    expression,
     identifierName,
     intLiteral,
-    pTerm,
     parseMiniLang,
     programParser,
-    readP,
-    returnP,
     spaceConsumer,
     stExpression,
+    stIf,
+    stRead,
+    stReturn,
+    stWriteExpr,
+    stWriteText,
+    term,
     unaryOp,
-    writeExpr,
-    writeText,
-    expression,
 ) where
 
 import Data.Text qualified as T
@@ -161,7 +162,7 @@ expression = binaries
             ]
         ]
     single' c = lexeme $ try $ char c *> notFollowedBy (char c)
-    value = pTerm
+    value = term
     binOp ::
         [Parser (Expression -> Expression -> Expression)] ->
         Parser Expression ->
@@ -176,8 +177,8 @@ expression = binaries
             right <- higherPrec
             return (op, right)
 
-pTerm :: Parser Expression
-pTerm =
+term :: Parser Expression
+term =
     lexeme $
         choice $
             concat
@@ -197,7 +198,7 @@ terminals =
 unaryOp :: Parser Expression
 unaryOp = do
     operators <- some allOperatos
-    operand <- pTerm
+    operand <- term
     return $ foldr ($) operand operators
   where
     allOperatos =
@@ -226,15 +227,15 @@ type ParserError = ParseErrorBundle Text Void
 parseMiniLang :: Text -> Either ParserError ([Declaration], [Statement])
 parseMiniLang = runParser programParser "input"
 
-writeExpr :: Parser Statement
-writeExpr = do
+stWriteExpr :: Parser Statement
+stWriteExpr = do
     keyword "write"
     expr <- expression
     keyword ";"
     return $ StWriteExpr expr
 
-writeText :: Parser Statement
-writeText = do
+stWriteText :: Parser Statement
+stWriteText = do
     keyword "write"
     text <- stringLiteral
     keyword ";"
@@ -243,15 +244,15 @@ writeText = do
 stringLiteral :: Parser Text
 stringLiteral = char '\"' *> manyTill L.charLiteral (char '\"') <&> T.pack
 
-readP :: Parser Statement
-readP = do
+stRead :: Parser Statement
+stRead = do
     keyword "read"
     ident <- identifierName
     keyword ";"
     return $ StRead ident
 
-returnP :: Parser Statement
-returnP = keyword "return" *> keyword ";" $> StReturn
+stReturn :: Parser Statement
+stReturn = keyword "return" *> keyword ";" $> StReturn
 
 stExpression :: Parser Statement
 stExpression = do
@@ -273,12 +274,12 @@ statement :: Parser Statement
 statement =
     choice
         [ stBlock
-        , try writeText
-        , writeExpr
+        , try stWriteText
+        , stWriteExpr
         , stIf
         , stWhile
-        , readP
-        , returnP
+        , stRead
+        , stReturn
         , stDeclaration
         , stExpression
         ]
@@ -296,7 +297,7 @@ stIf = do
     st <- statement
     elseSt <- optional elseStatement
     return $ case elseSt of
-        Just el -> StIfElse condition st el
+        Just else_ -> StIfElse condition st else_
         Nothing -> StIf condition st
   where
     elseStatement :: Parser Statement

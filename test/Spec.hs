@@ -2,12 +2,16 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+import Data.HashMap.Strict qualified as HM
 import Data.Text qualified as T
 import Relude
 import Test.Hspec
+import Test.Hspec.QuickCheck (prop)
 import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream, eof, parse, parseErrorPretty, parseMaybe)
+import Text.Printf
 import Text.RawString.QQ
 
+import Interpreter
 import MiniLang (
     Declaration (..),
     Expression (..),
@@ -21,8 +25,6 @@ import MiniLang (
     intLiteral,
     parseMiniLang,
  )
-import Test.Hspec.QuickCheck (prop)
-import Text.Printf
 
 parseEither :: Parser a -> Text -> Either Text a
 parseEither parser input = mapError showError parsed
@@ -333,3 +335,45 @@ main = hspec $ do
                                     )
                                 )
                             )
+    describe "evaluate" $ do
+        let emptyScope = evalExpression HM.empty
+        prop "evaluates int literals" $
+            \n ->
+                emptyScope (IntLiteral n) `shouldBe` Right (VInt n)
+        prop "evaluates int literals with unary minus" $
+            \a ->
+                let n = abs a
+                 in emptyScope (UnaryMinus (IntLiteral n)) `shouldBe` Right (VInt (-n))
+        it "evaluates sum of ints" $
+            emptyScope (IntLiteral 1 `Addition` IntLiteral 2) `shouldBe` Right (VInt 3)
+        it "evaluates subtraction sum of ints" $
+            emptyScope (IntLiteral 8 `Subtraction` IntLiteral 2) `shouldBe` Right (VInt 6)
+        it "evaluates multiplication of ints" $
+            emptyScope (IntLiteral 21 `Multiplication` IntLiteral 37) `shouldBe` Right (VInt 777)
+        it "evaluates divisio of ints" $
+            emptyScope (IntLiteral 8 `Division` IntLiteral 3) `shouldBe` Right (VInt 2)
+        it "evaluates bitwise sum of ints" $
+            emptyScope (IntLiteral 8 `BitwiseSum` IntLiteral 2) `shouldBe` Right (VInt 10)
+        prop "any number bitwise or'ed with -1 is -1" $
+            \n -> emptyScope (IntLiteral (-1) `BitwiseSum` IntLiteral n) `shouldBe` Right (VInt (-1))
+        prop "any number bitwise and'ed with -1 is this number" $
+            \n -> emptyScope (IntLiteral (-1) `BitwiseMult` IntLiteral n) `shouldBe` Right (VInt n)
+        it "bitwise negation of -1 is 0" $
+            emptyScope (BitwiseNeg (IntLiteral (-1))) `shouldBe` Right (VInt 0)
+        describe "comparisons" $ do
+            it "evaluates greater than on ints" $
+                emptyScope (IntLiteral 21 `GreaterThen` IntLiteral 37) `shouldBe` Right (VBool False)
+            it "evaluates greater than on an int and a double" $
+                emptyScope (IntLiteral 21 `GreaterThen` DoubleLiteral 37) `shouldBe` Right (VBool False)
+            it "evaluates greater than or equal on an int and a double" $
+                emptyScope (IntLiteral 21 `GreaterThenEq` DoubleLiteral 37) `shouldBe` Right (VBool False)
+            prop "less than and greater or equal are opposite (on an int and a double)" $ \(n, m) ->
+                emptyScope (IntLiteral n `GreaterThenEq` DoubleLiteral m)
+                    `shouldBe` let notValue (VBool b) = VBool (not b)
+                                   notValue v = v
+                                in notValue
+                                    <$> emptyScope (IntLiteral n `LessThen` DoubleLiteral m)
+            it "true is equal to true" $
+                emptyScope (BoolLiteral True `Equal` BoolLiteral True) `shouldBe` Right (VBool True)
+            it "false is not equal to true" $
+                emptyScope (BoolLiteral False `Equal` BoolLiteral True) `shouldBe` Right (VBool False)
