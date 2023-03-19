@@ -3,13 +3,13 @@
 {-# HLINT ignore "Use <$>" #-}
 
 module MiniLang (
-    Declaration (..),
     Expression (..),
     Identifier,
     Parser,
     ParserError,
     Program,
     Statement (..),
+    VarType,
     boolLiteral,
     declaration,
     doubleLiteral,
@@ -49,15 +49,23 @@ data Statement
     | StWriteText Text
     | StReturn
     | StDeclaration Declaration
+    | StAssignment Identifier Expression
     deriving (Eq, Show)
 
 type Identifier = Text
 
-data Declaration
-    = TypeBool Identifier
-    | TypeInt Identifier
-    | TypeDouble Identifier
-    deriving (Eq, Show)
+type Declaration = (Identifier, VarType)
+
+data VarType = TypeBool | TypeInt | TypeDouble deriving (Eq, Show)
+
+typeBool :: Identifier -> Declaration
+typeBool ident = (ident, TypeBool)
+
+typeInt :: Identifier -> Declaration
+typeInt ident = (ident, TypeInt)
+
+typeDouble :: Identifier -> Declaration
+typeDouble ident = (ident, TypeDouble)
 
 data Expression
     = -- unary, right
@@ -224,7 +232,7 @@ boolLiteral =
 
 type ParserError = ParseErrorBundle Text Void
 
-parseMiniLang :: Text -> Either ParserError ([Declaration], [Statement])
+parseMiniLang :: Text -> Either ParserError Program
 parseMiniLang = runParser programParser "input"
 
 stWriteExpr :: Parser Statement
@@ -281,6 +289,7 @@ statement =
         , stRead
         , stReturn
         , stDeclaration
+        , try stAssignment
         , stExpression
         ]
 
@@ -303,6 +312,13 @@ stIf = do
     elseStatement :: Parser Statement
     elseStatement = keyword "else" *> statement
 
+stAssignment :: Parser Statement
+stAssignment = do
+    name <- identifierName
+    keyword "="
+    value <- expression
+    keyword ";"
+    return $ StAssignment name value
 intLiteral :: Parser Expression
 intLiteral = do
     intString <- intParser
@@ -336,9 +352,9 @@ toNumber constructor = return . constructor . Unsafe.read
 declaration :: Parser Declaration
 declaration =
     choice
-        [ keyword "bool" *> (TypeBool <$> identifierName)
-        , keyword "int" *> (TypeInt <$> identifierName)
-        , keyword "double" *> (TypeDouble <$> identifierName)
+        [ keyword "bool" *> (typeBool <$> identifierName)
+        , keyword "int" *> (typeInt <$> identifierName)
+        , keyword "double" *> (typeDouble <$> identifierName)
         ]
         <* symbol ";"
 

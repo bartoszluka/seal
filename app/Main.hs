@@ -1,9 +1,19 @@
 module Main (main) where
 
-import MiniLang (expression)
+import Interpreter (eval)
+import MiniLang (parseMiniLang)
 import Relude
-import Text.Megaparsec
+import Text.Megaparsec (errorBundlePretty)
 
 main :: IO ()
 main = do
-    parseTest (expression <* eof) "a | b || c & d && true"
+    args <- getArgs
+    case args of
+        [filename] -> do
+            bytes <- readFileBS filename
+            let input = decodeUtf8 bytes
+            -- printT $ T.replace "\n" "\\n" input
+            case parseMiniLang input of
+                Right program -> eval program
+                Left err -> putStrLn $ errorBundlePretty err
+        _ -> putStrLn "1 arg needed"

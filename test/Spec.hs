@@ -369,10 +369,7 @@ main = hspec $ do
                 emptyScope (IntLiteral 21 `GreaterThenEq` DoubleLiteral 37) `shouldBe` Right (VBool False)
             prop "less than and greater or equal are opposite (on an int and a double)" $ \(n, m) ->
                 emptyScope (IntLiteral n `GreaterThenEq` DoubleLiteral m)
-                    `shouldBe` let notValue (VBool b) = VBool (not b)
-                                   notValue v = v
-                                in notValue
-                                    <$> emptyScope (IntLiteral n `LessThen` DoubleLiteral m)
+                    `shouldBe` emptyScope (LogicalNeg (IntLiteral n `LessThen` DoubleLiteral m))
             it "true is equal to true" $
                 emptyScope (BoolLiteral True `Equal` BoolLiteral True) `shouldBe` Right (VBool True)
             it "false is not equal to true" $

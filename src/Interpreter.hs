@@ -2,30 +2,151 @@
 
 module Interpreter (eval, evalExpression, Value (..), EvalError (..)) where
 
+import Control.Monad (foldM, foldM_)
 import Data.Bits (Bits ((.&.)), complement, (.|.))
 import Data.HashMap.Strict qualified as HM
 import MiniLang
 import Relude
+import Text.Megaparsec (eof, parse)
+
+type ProgramState = Scope
 
 eval :: Program -> IO ()
-eval = undefined
+eval (declarations, statements) = do
+    let unassigned = HM.fromList (map toValue declarations)
+    foldM_ doStatement unassigned statements
+  where
+    toValue (name, _type) = (name, Nothing)
+    doStatement :: ProgramState -> Statement -> IO ProgramState
+    doStatement scope = \case
+        StBlock stmts -> foldM doStatement scope stmts
+        StExpression ex -> do
+            case evalExpression scope ex of
+                Right _ -> return scope
+                Left err -> do
+                    -- TODO: accumulate errors
+                    print err
+                    return scope
+        StIf condition statement ->
+            case evalExpression scope condition of
+                Right (VBool cond) ->
+                    if cond
+                        then doStatement scope statement
+                        else return scope
+                Right _ -> do
+                    print "condition must be a boolean"
+                    return scope
+                Left err -> do
+                    -- TODO: accumulate errors
+                    print err
+                    return scope
+        StIfElse condition trueStatement falseStatement ->
+            case evalExpression scope condition of
+                Right (VBool cond) ->
+                    doStatement scope $
+                        if cond then trueStatement else falseStatement
+                Right _ -> do
+                    print "condition must be a boolean"
+                    return scope
+                Left err -> do
+                    -- TODO: accumulate errors
+                    print err
+                    return scope
+        while@(StWhile condition statement) ->
+            case evalExpression scope condition of
+                Right (VBool cond) ->
+                    if cond
+                        then do
+                            newState <- doStatement scope statement
+                            doStatement newState while
+                        else return scope
+                Right _ -> do
+                    print "condition must be a boolean"
+                    return scope
+                Left err -> do
+                    -- TODO: accumulate errors
+                    print err
+                    return scope
+        StAssignment name value ->
+            case HM.lookup name scope of
+                Nothing -> do
+                    -- TODO: errors
+                    print $ "undeclared " <> name
+                    return scope
+                Just _ ->
+                    case evalExpression scope value of
+                        Right v ->
+                            do
+                                -- TODO: types!
+                                let newScope = HM.insert name (Just v) scope
+                                return newScope
+                        Left err -> do
+                            -- TODO: accumulate errors
+                            print err
+                            return scope
+        StRead ident ->
+            case HM.lookup ident scope of
+                Nothing -> do
+                    -- TODO: errors
+                    print $ "undeclared " <> ident
+                    return scope
+                -- TODO: types!
+                Just _ -> do
+                    line <- getLine
+
+                    case parse (expression <* eof) "" line of
+                        Right expr -> case evalExpression scope expr of
+                            Right v ->
+                                let newScope = HM.insert ident (Just v) scope
+                                 in return newScope
+                            Left evalError -> do
+                                -- TODO: errors
+                                print evalError
+                                return scope
+                        Left parseError -> do
+                            -- TODO: errors
+                            print parseError
+                            return scope
+        StWriteExpr expr -> do
+            case evalExpression scope expr of
+                Right v -> do
+                    putStrLn (justValue v)
+                    return scope
+                Left err -> do
+                    -- TODO:
+                    print err
+                    return scope
+        StWriteText text -> print text >> return scope
+        StReturn -> return scope
+        StDeclaration (ident, _type) -> do
+            case HM.lookup ident scope of
+                Nothing -> return (HM.insert ident Nothing scope)
+                Just _ -> do
+                    print $ "redeclaration of " <> ident
+                    return scope
 
 data EvalError
     = Binary (Value, Value)
     | Unary Value
     | Expr Expression
     | NotInScope Identifier
+    | Unassigned Identifier
     deriving (Show, Eq)
 
 data Value = VInt Int | VDouble Double | VBool Bool
     deriving (Show, Eq)
+
+justValue (VInt i) = show i
+justValue (VDouble d) = show d
+justValue (VBool b) = show b
+
 
 showType :: IsString a => Value -> a
 showType (VInt _) = "int"
 showType (VDouble _) = "double"
 showType (VBool _) = "bool"
 
-type Scope = HM.HashMap Identifier Value
+type Scope = HM.HashMap Identifier (Maybe Value)
 
 -- TODO: better error handling
 evalExpression :: Scope -> Expression -> Either EvalError Value
@@ -187,6 +308,5 @@ evalExpression scope = evalExpr
         Identifier ident ->
             case HM.lookup ident scope of
                 Nothing -> Left $ NotInScope ident
-                Just v -> return v
-
---
+                Just Nothing -> Left $ Unassigned ident
+                Just (Just v) -> return v
