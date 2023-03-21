@@ -1,7 +1,7 @@
 module Main (main) where
 
-import Seal (eval,parseFile)
 import Relude
+import Seal (eval, parseFile)
 import Text.Megaparsec (errorBundlePretty)
 
 main :: IO ()

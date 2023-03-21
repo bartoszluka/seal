@@ -14,10 +14,10 @@ import Text.RawString.QQ
 import Seal.Interpreter
 import Seal.Parser (
     Declaration,
-    VarType(..),
     Expression (..),
     Parser,
     Statement (..),
+    VarType (..),
     boolLiteral,
     declaration,
     doubleLiteral,
@@ -67,7 +67,7 @@ main = hspec $ do
                         bool doopy;
                     }
                     |]
-                    `shouldBe` Right ([ ("i",TypeInt), ("d",TypeDouble ), ("c",TypeBool ), ("doopy",TypeBool )], [])
+                    `shouldBe` Right ([("i", TypeInt), ("d", TypeDouble), ("c", TypeBool), ("doopy", TypeBool)], [])
 
             it "parses program with declarations and comments" $ do
                 parseFile
@@ -80,7 +80,7 @@ main = hspec $ do
                         }
                         //program end
                     |]
-                    `shouldBe` Right ([("i",TypeInt ), ("d",TypeDouble ), ("c",TypeBool ), ("doopy",TypeBool )], [])
+                    `shouldBe` Right ([("i", TypeInt), ("d", TypeDouble), ("c", TypeBool), ("doopy", TypeBool)], [])
             it "parses program with declarations and write statements" $ do
                 parseFile
                     [r| program 
@@ -89,7 +89,7 @@ main = hspec $ do
                             write "dupa";
                         }
                     |]
-                    `shouldBe` Right ([("i",TypeInt )], [StWriteText "dupa"])
+                    `shouldBe` Right ([("i", TypeInt)], [StWriteText "dupa"])
             it "parses program with declarations, write statement, read statement and return" $ do
                 parseFile
                     [r| program 
@@ -100,7 +100,7 @@ main = hspec $ do
                             return;
                         }
                     |]
-                    `shouldBe` Right ([("i",TypeInt )], [StWriteText "dupa", StRead "dupa", StReturn])
+                    `shouldBe` Right ([("i", TypeInt)], [StWriteText "dupa", StRead "dupa", StReturn])
             it "parses program with write statements that takes an expression" $ do
                 parseFile
                     [r| program 
@@ -181,7 +181,7 @@ main = hspec $ do
 
         describe "declarations" $ do
             it "parses declaration of an int variable" $
-                parseMaybe declaration "int i;" `shouldBe` Just (("i",TypeInt ))
+                parseMaybe declaration "int i;" `shouldBe` Just (("i", TypeInt))
             it "parses declaration of an int variable with different ammount of whitespace" $ do
                 parseEither
                     declaration
@@ -189,11 +189,11 @@ main = hspec $ do
                                     abcd123
                                     
                                     ;|]
-                    `shouldBe` Right (("abcd123",TypeInt ))
+                    `shouldBe` Right (("abcd123", TypeInt))
             it "parses declaration of a 'double' variable" $
-                parseMaybe declaration "double i;" `shouldBe` Just (("i",TypeDouble ))
+                parseMaybe declaration "double i;" `shouldBe` Just (("i", TypeDouble))
             it "parses declaration of a 'bool' variable" $
-                parseMaybe declaration "bool i;" `shouldBe` Just (("i",TypeBool ))
+                parseMaybe declaration "bool i;" `shouldBe` Just (("i", TypeBool))
 
         describe "expressions" $ do
             describe "int literals" $ do

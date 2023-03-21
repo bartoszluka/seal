@@ -10,7 +10,7 @@ module Seal.Parser (
     ParserError,
     Program,
     Statement (..),
-    VarType(..),
+    VarType (..),
     boolLiteral,
     declaration,
     doubleLiteral,
