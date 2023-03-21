@@ -1,7 +1,7 @@
-name: mini-lang
+name: seal
 version: 0.1.0.0
-github: bartoszluka/mini-lang
-description: Complier for the mini language
+github: bartoszluka/seal
+description: A simple, C-like programming language
 license: BSD3
 author: Bartek Łuka
 maintainer: bartoszluka1@gmail.com
@@ -44,7 +44,7 @@ library:
   source-dirs: src
 
 executables:
-  mini-lang-exe:
+  seal-exe:
     main: Main.hs
     source-dirs: app
     ghc-options:
@@ -52,10 +52,10 @@ executables:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
-      - mini-lang
+      - seal
 
 tests:
-  mini-lang-test:
+  seal-test:
     main: Spec.hs
     source-dirs: test
     ghc-options:
@@ -63,7 +63,7 @@ tests:
       - -rtsopts
       - -with-rtsopts=-N
     dependencies:
-      - mini-lang
+      - seal
       - hspec
       - hspec-contrib
       - QuickCheck

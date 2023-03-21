@@ -1,4 +1,4 @@
-# Changelog for `mini-lang`
+# Changelog for `seal`
 
 All notable changes to this project will be documented in this file.
 

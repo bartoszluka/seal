@@ -1,7 +1,6 @@
 module Main (main) where
 
-import Interpreter (eval)
-import MiniLang (parseMiniLang)
+import Seal (eval,parseFile)
 import Relude
 import Text.Megaparsec (errorBundlePretty)
 
@@ -12,7 +11,7 @@ main = do
         [filename] -> do
             bytes <- readFileBS filename
             let input = decodeUtf8 bytes
-            case parseMiniLang input of
+            case parseFile input of
                 Right program -> eval program
                 Left err -> putStrLn $ errorBundlePretty err
         _ -> putStrLn "1 arg needed"

@@ -1,8 +1,14 @@
-# mini-lang
+# Seal Language
 
-A compiler for the mini language.
+Seal is a simple, C-like programming language made for fun.
 
-# Progress
+## Name
+
+The name is a pun that comes from having a C-like syntax.
+
+C-like → sea like → seal
+
+## Progress
 
 TODO list of features:
 
@@ -11,5 +17,5 @@ TODO list of features:
 - [x] expressions
 - [x] operator precedence
 - [x] if-else statements
-- [ ] interpreter
+- [x] interpreter
 - [ ] compiler

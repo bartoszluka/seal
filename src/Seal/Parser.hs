@@ -2,21 +2,22 @@
 
 {-# HLINT ignore "Use <$>" #-}
 
-module MiniLang (
+module Seal.Parser (
+    Declaration,
     Expression (..),
     Identifier,
     Parser,
     ParserError,
     Program,
     Statement (..),
-    VarType,
+    VarType(..),
     boolLiteral,
     declaration,
     doubleLiteral,
     expression,
     identifierName,
     intLiteral,
-    parseMiniLang,
+    parseFile,
     programParser,
     spaceConsumer,
     stExpression,
@@ -232,8 +233,8 @@ boolLiteral =
 
 type ParserError = ParseErrorBundle Text Void
 
-parseMiniLang :: Text -> Either ParserError Program
-parseMiniLang = runParser programParser "input"
+parseFile :: Text -> Either ParserError Program
+parseFile = runParser programParser "input"
 
 stWriteExpr :: Parser Statement
 stWriteExpr = do

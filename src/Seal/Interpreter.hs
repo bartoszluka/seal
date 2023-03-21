@@ -1,12 +1,17 @@
-module Interpreter (eval, evalExpression, Value (..), EvalError (..)) where
+module Seal.Interpreter (
+    eval,
+    evalExpression,
+    Value (..),
+    EvalError (..),
+) where
 
 import Control.Monad (foldM, foldM_)
 import Data.Bits (Bits ((.&.)), complement, (.|.))
 import Data.HashMap.Strict qualified as HM
 import Data.Text qualified as T
 import Data.Text.IO (putStrLn)
-import MiniLang
 import Relude hiding (putStrLn)
+import Seal.Parser
 import Text.Megaparsec (eof, parse)
 
 type ProgramState = Scope

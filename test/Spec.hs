@@ -11,9 +11,10 @@ import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream,
 import Text.Printf
 import Text.RawString.QQ
 
-import Interpreter
-import MiniLang (
-    Declaration (..),
+import Seal.Interpreter
+import Seal.Parser (
+    Declaration,
+    VarType(..),
     Expression (..),
     Parser,
     Statement (..),
@@ -23,7 +24,7 @@ import MiniLang (
     expression,
     identifierName,
     intLiteral,
-    parseMiniLang,
+    parseFile,
  )
 
 parseEither :: Parser a -> Text -> Either Text a
@@ -49,9 +50,9 @@ main = hspec $ do
     describe "parsing" $ do
         describe "program" $ do
             it "parses program with no statements" $
-                parseMiniLang "program{}" `shouldSatisfy` isRight
+                parseFile "program{}" `shouldSatisfy` isRight
             it "parses program with no statements and some whitespace" $ do
-                parseMiniLang
+                parseFile
                     [r|program {
 
                     }
@@ -59,17 +60,17 @@ main = hspec $ do
                     `shouldSatisfy` isRight
 
             it "parses program with declarations" $ do
-                parseMiniLang
+                parseFile
                     [r|program {
                         int i; double d;
                         bool c;
                         bool doopy;
                     }
                     |]
-                    `shouldBe` Right ([TypeInt "i", TypeDouble "d", TypeBool "c", TypeBool "doopy"], [])
+                    `shouldBe` Right ([ ("i",TypeInt), ("d",TypeDouble ), ("c",TypeBool ), ("doopy",TypeBool )], [])
 
             it "parses program with declarations and comments" $ do
-                parseMiniLang
+                parseFile
                     [r|// program start
                         program 
                         {
@@ -79,18 +80,18 @@ main = hspec $ do
                         }
                         //program end
                     |]
-                    `shouldBe` Right ([TypeInt "i", TypeDouble "d", TypeBool "c", TypeBool "doopy"], [])
+                    `shouldBe` Right ([("i",TypeInt ), ("d",TypeDouble ), ("c",TypeBool ), ("doopy",TypeBool )], [])
             it "parses program with declarations and write statements" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                             int i;
                             write "dupa";
                         }
                     |]
-                    `shouldBe` Right ([TypeInt "i"], [StWriteText "dupa"])
+                    `shouldBe` Right ([("i",TypeInt )], [StWriteText "dupa"])
             it "parses program with declarations, write statement, read statement and return" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                             int i;
@@ -99,9 +100,9 @@ main = hspec $ do
                             return;
                         }
                     |]
-                    `shouldBe` Right ([TypeInt "i"], [StWriteText "dupa", StRead "dupa", StReturn])
+                    `shouldBe` Right ([("i",TypeInt )], [StWriteText "dupa", StRead "dupa", StReturn])
             it "parses program with write statements that takes an expression" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                             write w;
@@ -109,7 +110,7 @@ main = hspec $ do
                     |]
                     `shouldBe` Right ([], [StWriteExpr (Identifier "w")])
             it "parses a program with an if statement" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                              if(harryPotter)
@@ -118,7 +119,7 @@ main = hspec $ do
                     |]
                     `shouldBe` Right ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
             it "parses a program with an if-else statement" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                              if(harryPotter)
@@ -137,7 +138,7 @@ main = hspec $ do
                             ]
                         )
             it "parses a program with a nested if-else statement" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                              if(harryPotter)
@@ -160,7 +161,7 @@ main = hspec $ do
                             ]
                         )
             it "parses a program with a while statement" $ do
-                parseMiniLang
+                parseFile
                     [r| program 
                         {
                              while(alive)
@@ -180,7 +181,7 @@ main = hspec $ do
 
         describe "declarations" $ do
             it "parses declaration of an int variable" $
-                parseMaybe declaration "int i;" `shouldBe` Just (TypeInt "i")
+                parseMaybe declaration "int i;" `shouldBe` Just (("i",TypeInt ))
             it "parses declaration of an int variable with different ammount of whitespace" $ do
                 parseEither
                     declaration
@@ -188,11 +189,11 @@ main = hspec $ do
                                     abcd123
                                     
                                     ;|]
-                    `shouldBe` Right (TypeInt "abcd123")
+                    `shouldBe` Right (("abcd123",TypeInt ))
             it "parses declaration of a 'double' variable" $
-                parseMaybe declaration "double i;" `shouldBe` Just (TypeDouble "i")
+                parseMaybe declaration "double i;" `shouldBe` Just (("i",TypeDouble ))
             it "parses declaration of a 'bool' variable" $
-                parseMaybe declaration "bool i;" `shouldBe` Just (TypeBool "i")
+                parseMaybe declaration "bool i;" `shouldBe` Just (("i",TypeBool ))
 
         describe "expressions" $ do
             describe "int literals" $ do
