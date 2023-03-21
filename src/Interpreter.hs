@@ -1,12 +1,12 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Interpreter (eval, evalExpression, Value (..), EvalError (..)) where
 
 import Control.Monad (foldM, foldM_)
 import Data.Bits (Bits ((.&.)), complement, (.|.))
 import Data.HashMap.Strict qualified as HM
+import Data.Text qualified as T
+import Data.Text.IO (putStrLn)
 import MiniLang
-import Relude
+import Relude hiding (putStrLn)
 import Text.Megaparsec (eof, parse)
 
 type ProgramState = Scope
@@ -34,7 +34,7 @@ eval (declarations, statements) = do
                         then doStatement scope statement
                         else return scope
                 Right _ -> do
-                    print "condition must be a boolean"
+                    putStrLn "condition must be a boolean"
                     return scope
                 Left err -> do
                     -- TODO: accumulate errors
@@ -46,7 +46,7 @@ eval (declarations, statements) = do
                     doStatement scope $
                         if cond then trueStatement else falseStatement
                 Right _ -> do
-                    print "condition must be a boolean"
+                    putStrLn "condition must be a boolean"
                     return scope
                 Left err -> do
                     -- TODO: accumulate errors
@@ -61,7 +61,7 @@ eval (declarations, statements) = do
                             doStatement newState while
                         else return scope
                 Right _ -> do
-                    print "condition must be a boolean"
+                    putStrLn "condition must be a boolean"
                     return scope
                 Left err -> do
                     -- TODO: accumulate errors
@@ -71,7 +71,7 @@ eval (declarations, statements) = do
             case HM.lookup name scope of
                 Nothing -> do
                     -- TODO: errors
-                    print $ "undeclared " <> name
+                    putStrLn $ "undeclared " <> name
                     return scope
                 Just _ ->
                     case evalExpression scope value of
@@ -88,7 +88,7 @@ eval (declarations, statements) = do
             case HM.lookup ident scope of
                 Nothing -> do
                     -- TODO: errors
-                    print $ "undeclared " <> ident
+                    putStrLn $ "undeclared " <> ident
                     return scope
                 -- TODO: types!
                 Just _ -> do
@@ -110,19 +110,19 @@ eval (declarations, statements) = do
         StWriteExpr expr -> do
             case evalExpression scope expr of
                 Right v -> do
-                    putStrLn (justValue v)
+                    putStr (justValue v)
                     return scope
                 Left err -> do
                     -- TODO:
                     print err
                     return scope
-        StWriteText text -> print text >> return scope
+        StWriteText text -> putStr (T.unpack text) >> return scope
         StReturn -> return scope
         StDeclaration (ident, _type) -> do
             case HM.lookup ident scope of
                 Nothing -> return (HM.insert ident Nothing scope)
                 Just _ -> do
-                    print $ "redeclaration of " <> ident
+                    putStrLn $ "redeclaration of " <> ident
                     return scope
 
 data EvalError
@@ -139,7 +139,6 @@ data Value = VInt Int | VDouble Double | VBool Bool
 justValue (VInt i) = show i
 justValue (VDouble d) = show d
 justValue (VBool b) = show b
-
 
 showType :: IsString a => Value -> a
 showType (VInt _) = "int"

@@ -12,7 +12,6 @@ main = do
         [filename] -> do
             bytes <- readFileBS filename
             let input = decodeUtf8 bytes
-            -- printT $ T.replace "\n" "\\n" input
             case parseMiniLang input of
                 Right program -> eval program
                 Left err -> putStrLn $ errorBundlePretty err

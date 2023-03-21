@@ -12,6 +12,7 @@ default-extensions:
   - OverloadedStrings
   - ImportQualifiedPost
   - ScopedTypeVariables
+  - LambdaCase
 
 extra-source-files:
   - README.md
