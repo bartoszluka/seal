@@ -13,7 +13,6 @@ import Text.RawString.QQ
 
 import Seal.Interpreter
 import Seal.Parser (
-    Declaration,
     Expression (..),
     Parser,
     Statement (..),
@@ -181,7 +180,7 @@ main = hspec $ do
 
         describe "declarations" $ do
             it "parses declaration of an int variable" $
-                parseMaybe declaration "int i;" `shouldBe` Just (("i", TypeInt))
+                parseMaybe declaration "int i;" `shouldBe` Just ("i", TypeInt)
             it "parses declaration of an int variable with different ammount of whitespace" $ do
                 parseEither
                     declaration
@@ -189,11 +188,11 @@ main = hspec $ do
                                     abcd123
                                     
                                     ;|]
-                    `shouldBe` Right (("abcd123", TypeInt))
+                    `shouldBe` Right ("abcd123", TypeInt)
             it "parses declaration of a 'double' variable" $
-                parseMaybe declaration "double i;" `shouldBe` Just (("i", TypeDouble))
+                parseMaybe declaration "double i;" `shouldBe` Just ("i", TypeDouble)
             it "parses declaration of a 'bool' variable" $
-                parseMaybe declaration "bool i;" `shouldBe` Just (("i", TypeBool))
+                parseMaybe declaration "bool i;" `shouldBe` Just ("i", TypeBool)
 
         describe "expressions" $ do
             describe "int literals" $ do

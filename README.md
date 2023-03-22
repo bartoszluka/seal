@@ -10,7 +10,7 @@ C-like → sea like → seal
 
 ## Progress
 
-TODO list of features:
+list of features:
 
 - [x] empty program
 - [x] statements
@@ -18,4 +18,5 @@ TODO list of features:
 - [x] operator precedence
 - [x] if-else statements
 - [x] interpreter
+- [ ] good error messages
 - [ ] compiler

@@ -12,6 +12,11 @@ main = do
             bytes <- readFileBS filename
             let input = decodeUtf8 bytes
             case parseFile input of
-                Right program -> eval program
+                Right program -> do
+                    maybeErrors <- eval program
+                    case maybeErrors of
+                        Right _ -> return ()
+                        Left errors -> print errors
+
                 Left err -> putStrLn $ errorBundlePretty err
         _ -> putStrLn "1 arg needed"
