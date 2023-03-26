@@ -11,6 +11,7 @@ import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream,
 import Text.Printf
 import Text.RawString.QQ
 
+import Seal.Compiler (Error (..), typecheck)
 import Seal.Interpreter
 import Seal.Parser (
     Expression (..),
@@ -374,3 +375,10 @@ main = hspec $ do
                 emptyScope (BoolLiteral True `Equal` BoolLiteral True) `shouldBe` Right (VBool True)
             it "false is not equal to true" $
                 emptyScope (BoolLiteral False `Equal` BoolLiteral True) `shouldBe` Right (VBool False)
+    describe "typecheck" $ do
+        it "accepts a program with boolean expression as a condition" $
+            typecheck ([], [StIf (BoolLiteral True) StReturn]) `shouldBe` Right ()
+        it "does not accept a program with int expression as a condition" $
+            typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
+        it "does not accept a program with int expression as a condition" $
+            typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])

@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Seal
+      Seal.Compiler
       Seal.Interpreter
       Seal.Parser
   other-modules:
