@@ -39,54 +39,47 @@ eval :: Program -> IO (Either [Error] ())
 eval (declarations, statements) = do
     let toValue (name, _type) = (name, Left _type)
         unassigned = HM.fromList (map toValue declarations)
-    runProgram <- foldM doStatement ([], unassigned) statements
+    runProgram <- foldM doStatement ([], Just unassigned) statements
     return $ case runProgram of
         ([], _) -> Right ()
         (errors, _) -> Left errors
   where
-    doStatement :: ([Error], ProgramState) -> Statement -> IO ([Error], ProgramState)
-    doStatement (errors, scope) = \case
-        StBlock stmts -> foldM doStatement (errors, scope) stmts
+    doStatement :: ([Error], Maybe ProgramState) -> Statement -> IO ([Error], Maybe ProgramState)
+    doStatement (errors, Nothing) = const $ return (errors, Nothing)
+    doStatement (errors, Just scope) = \case
+        StBlock stmts -> foldM doStatement (errors, Just scope) stmts
         StExpression ex -> do
             case evalExpression scope ex of
                 Right _ -> passArgsAsGiven
-                Left err -> do
-                    return (EEval err : errors, scope)
+                Left err -> addError $ EEval err
         StIf condition statement ->
             case evalExpression scope condition of
                 Right (VBool cond) ->
                     if cond
-                        then doStatement (errors, scope) statement
+                        then doStatement (errors, Just scope) statement
                         else passArgsAsGiven
-                Right wrongType -> do
-                    return (EType TypeBool wrongType : errors, scope)
-                Left err -> do
-                    return (EEval err : errors, scope)
+                Right wrongType -> addError $ EType TypeBool wrongType
+                Left err -> addError $ EEval err
         StIfElse condition trueStatement falseStatement ->
             case evalExpression scope condition of
                 Right (VBool cond) ->
-                    doStatement (errors, scope) $
+                    doStatement (errors, Just scope) $
                         if cond then trueStatement else falseStatement
-                Right wrongType -> do
-                    return (EType TypeBool wrongType : errors, scope)
-                Left err -> do
-                    return (EEval err : errors, scope)
+                Right wrongType -> addError $ EType TypeBool wrongType
+                Left err -> addError $ EEval err
         while@(StWhile condition statement) ->
             case evalExpression scope condition of
                 Right (VBool cond) ->
                     if cond
                         then do
-                            newState <- doStatement (errors, scope) statement
+                            newState <- doStatement (errors, Just scope) statement
                             doStatement newState while
                         else passArgsAsGiven
-                Right wrongType -> do
-                    return (EType TypeBool wrongType : errors, scope)
-                Left err -> do
-                    return (EEval err : errors, scope)
+                Right wrongType -> addError $ EType TypeBool wrongType
+                Left err -> addError $ EEval err
         StAssignment name value ->
             case HM.lookup name scope of
-                Nothing -> do
-                    return (EUndeclared name : errors, scope)
+                Nothing -> addError $ EUndeclared name
                 Just found ->
                     case evalExpression scope value of
                         (Right v) ->
@@ -99,9 +92,8 @@ eval (declarations, statements) = do
                                 (Right (VDouble _), new@(VDouble _)) -> assign new
                                 (old, new) ->
                                     let err = EAssignType (name, toValue old) new
-                                     in return (err : errors, scope)
-                        Left err -> do
-                            return (EEval err : errors, scope)
+                                     in return (err : errors, Just scope)
+                        Left err -> addError $ EEval err
                   where
                     toValue :: Either VarType Value -> VarType
                     toValue = \case
@@ -112,11 +104,10 @@ eval (declarations, statements) = do
 
                     assign v =
                         let newScope = HM.insert name (Right v) scope
-                         in return (errors, newScope)
+                         in return (errors, Just newScope)
         StRead ident ->
             case HM.lookup ident scope of
-                Nothing -> do
-                    return (EUndeclared ident : errors, scope)
+                Nothing -> addError $ EUndeclared ident
                 Just (Left type') -> case type' of
                     TypeInt -> parseAndInsert intLiteral VInt $ \case
                         IntLiteral n -> Right n
@@ -135,9 +126,9 @@ eval (declarations, statements) = do
                                 case matcher r of
                                     Right value ->
                                         let newScope = HM.insert ident (Right (constructor value)) scope
-                                         in return (errors, newScope)
-                                    Left err -> return (err : errors, scope)
-                            Left parseError -> return (EParse parseError : errors, scope)
+                                         in return (errors, Just newScope)
+                                    Left err -> addError err
+                            Left parseError -> addError $ EParse parseError
                 Just (Right existing) -> case existing of
                     VInt _ -> parseAndInsert intLiteral VInt $ \case
                         IntLiteral n -> Right n
@@ -156,25 +147,24 @@ eval (declarations, statements) = do
                                 case matcher r of
                                     Right value ->
                                         let newScope = HM.insert ident (Right (constructor value)) scope
-                                         in return (errors, newScope)
-                                    Left err -> return (err : errors, scope)
-                            Left parseError -> return (EParse parseError : errors, scope)
+                                         in return (errors, Just newScope)
+                                    Left err -> addError err
+                            Left parseError -> addError $ EParse parseError
         StWriteExpr expr -> do
             case evalExpression scope expr of
                 Right v -> do
                     putStr (justValue v)
                     passArgsAsGiven
-                Left evalError -> do
-                    return (EEval evalError : errors, scope)
+                Left evalError -> addError (EEval evalError)
         StWriteText text -> putStr text >> passArgsAsGiven
-        StReturn -> passArgsAsGiven -- TODO: terminate program here
+        StReturn -> return (errors, Nothing)
         StDeclaration (ident, type_) -> do
             case HM.lookup ident scope of
-                Nothing -> return (errors, HM.insert ident (Left type_) scope)
-                Just _ -> do
-                    return (ERedeclararion ident : errors, scope)
+                Nothing -> return (errors, Just $ HM.insert ident (Left type_) scope)
+                Just _ -> addError (ERedeclararion ident)
       where
-        passArgsAsGiven = return (errors, scope)
+        passArgsAsGiven = return (errors, Just scope)
+        addError err = return (err : errors, Just scope)
 
 data EvalError
     = Binary Expression
