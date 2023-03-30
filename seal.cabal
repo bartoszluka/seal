@@ -45,6 +45,7 @@ library
     , megaparsec
     , parser-combinators
     , relude
+    , string-interpolate
     , text
   default-language: Haskell2010
 
@@ -67,6 +68,7 @@ executable seal-exe
     , parser-combinators
     , relude
     , seal
+    , string-interpolate
     , text
   default-language: Haskell2010
 
@@ -95,5 +97,6 @@ test-suite seal-test
     , raw-strings-qq
     , relude
     , seal
+    , string-interpolate
     , text
   default-language: Haskell2010

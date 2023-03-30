@@ -1,6 +1,10 @@
-module Seal.Compiler (typecheck, Error (..)) where
+{-# LANGUAGE QuasiQuotes #-}
+
+module Seal.Compiler (typecheck, Error (..), codegen) where
 
 import Data.HashMap.Strict qualified as HM
+import Data.String.Interpolate (i, iii)
+import Data.Text qualified as T
 import Relude
 import Seal.Interpreter (EvalError, Value (..), evalExpression)
 import Seal.Parser (Declaration, Identifier, Program, Statement (..), VarType (..))
@@ -99,3 +103,38 @@ typecheck (declarations, statements) =
       where
         err = return . Left . one
         ok = return $ Right ()
+
+findTexts :: [Statement] -> [Text]
+findTexts = concatMap extractText
+  where
+    extractText = \case
+        -- TODO: add labels to texts
+        StWriteText text -> [text]
+        StBlock stmts -> concatMap extractText stmts
+        _ -> []
+
+codegen :: Program -> Text
+codegen (declarations, statements) =
+    T.unlines
+        [ T.intercalate "\n" $ zipWith declareStrConstant [1 ..] (findTexts statements)
+        , "; External declaration of the puts function"
+        , "declare i32 @puts(ptr nocapture) nounwind"
+        , "; Definition of main function"
+        , "define i32 @main() {"
+        , T.intercalate "\n" (pad . genStatement <$> statements)
+        , pad "ret i32 0"
+        , "}"
+        ]
+  where
+    padding = "    "
+    pad = (padding <>)
+    genStatement :: Statement -> Text
+    genStatement = \case
+        StWriteText text -> "call i32 @puts(ptr @str1) ; write " <> show text
+
+declareStrConstant :: Int -> Text -> Text
+declareStrConstant n text =
+    [i|@str #{n} = private unnamed_addr constant [#{len} x i8 "#{escaped}"|]
+  where
+    len = T.length text + 1
+    escaped = T.replace "\n" "\\0A" text <> "\\00"

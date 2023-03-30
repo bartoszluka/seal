@@ -28,6 +28,7 @@ dependencies:
   - text
   - megaparsec
   - parser-combinators
+  - string-interpolate
 
 ghc-options:
   - -Wall
