@@ -5,6 +5,8 @@
 module Seal.Compiler (typecheck, Error (..), codegen) where
 
 import Data.HashMap.Strict qualified as HM
+import Data.Sequence (Seq ((:|>)))
+import Data.Sequence qualified as Seq
 import Data.String.Interpolate (i)
 import Data.Text qualified as T
 import Relude
@@ -106,47 +108,43 @@ typecheck (declarations, statements) =
         err = return . Left . one
         ok = return $ Right ()
 
-findTexts :: [Statement] -> [Text]
-findTexts = concatMap extractText
-  where
-    extractText = \case
-        -- TODO: add labels to texts
-        StWriteText text -> [text]
-        StBlock stmts -> concatMap extractText stmts
-        _ -> []
-
 codegen :: Program -> Text
 codegen (declarations, statements) =
-    T.unlines
-        . filter (/= T.empty)
-        $ [ T.unlines $ zipWith declareStrConstant [1 ..] (findTexts statements)
-          , "; External declaration of the printf function"
-          , "declare i32 @printf(ptr noundef, ...)"
-          , "@.int_printing = private unnamed_addr constant [3 x i8] c\"%d\\00\""
-          , "@.double_printing = private unnamed_addr constant [3 x i8] c\"%f\\00\""
-          , "@.str.s = private unnamed_addr constant [3 x i8] c\"%s\\00\""
-          , "@.str.true = private unnamed_addr constant [5 x i8] c\"true\\00\""
-          , "@.str.false = private unnamed_addr constant [6 x i8] c\"false\\00\""
-          , "; Definition of main function"
-          , "define i32 @main() {"
-          , T.unlines
-                . map indent
-                . reverse
-                . codeLines
-                . execState (mapM_ genStatement statements)
-                $ newCodeGen
-          , indent "ret i32 0"
-          , "}"
-          ]
+    let
+        CodeGen{codeLines, textConstants} = execState (mapM_ genStatement statements) newCodeGen
+     in
+        T.unlines
+            . filter (/= T.empty)
+            $ [ "; External declaration of the printf function"
+              , "declare i32 @printf(ptr noundef, ...)"
+              , "; constants for printfing values"
+              , "@.int_printing = private unnamed_addr constant [3 x i8] c\"%d\\00\""
+              , "@.double_printing = private unnamed_addr constant [3 x i8] c\"%f\\00\""
+              , "@.str.s = private unnamed_addr constant [3 x i8] c\"%s\\00\""
+              , "@.str.true = private unnamed_addr constant [5 x i8] c\"true\\00\""
+              , "@.str.false = private unnamed_addr constant [6 x i8] c\"false\\00\""
+              , if Seq.null textConstants then "" else "; constants for texts"
+              , T.unlines . toList $ textConstants
+              , "; Definition of main function"
+              , "define i32 @main() {"
+              , T.unlines
+                    . toList
+                    . fmap indent
+                    $ codeLines
+              , indent [i|br label %#{endMainLabel}|]
+              , indent [i|#{endMainLabel}:|]
+              , indent "ret i32 0"
+              , "}"
+              ]
   where
     indentation = "    "
     indent = (indentation <>)
     genStatement :: Statement -> State CodeGen ()
     genStatement = \case
         StWriteText text -> do
-            -- TODO: correct labels
-            appendLine $ "call i32 @printf(ptr @str1) ; write " <> show text
-            return undefined
+            label <- declareTextConstant text
+            appendLine [i|call i32 @printf(ptr #{label})|]
+            return ()
         StWriteExpr expr -> do
             (value, typ) <- genExpr expr
             case typ of
@@ -155,23 +153,51 @@ codegen (declarations, statements) =
                 TypeDouble ->
                     appendLine [i|call i32 (ptr, ...) @printf(ptr @.double_printing, double #{value})|]
                 TypeBool -> do
-                    labelCast <- nextLabel
+                    labelCast <- nextVariable
                     appendLine [i|#{labelCast} = trunc i8 #{value} to i1|]
                     -- NOTE: if there is some pointer error, this maybe useful
-                    -- labelCast2 <- nextLabel
+                    -- labelCast2 <- nextVariable
                     -- appendLine [i|#{labelCast2} = zext i8 #{value} to i64|]
-                    labelSelect <- nextLabel
+                    labelSelect <- nextVariable
                     appendLine [i|#{labelSelect} = select i1 #{labelCast}, ptr @.str.true, ptr @.str.false|]
                     appendLine [i|call i32 (ptr, ...) @printf(ptr noundef @.str.s, ptr noundef #{labelSelect})|]
 
                     return ()
         StBlock _ -> undefined
-        StExpression _ -> undefined
-        StIf _ _ -> undefined
-        StIfElse _ _ _ -> undefined
+        StExpression expr ->
+            genExpr expr $> ()
+        StIf condition statement -> do
+            -- TODO: typecheck?
+            (conditionVar, typ) <- genExpr condition
+            ifTrue <- nextLabel
+            endIf <- nextLabel
+            castToBool <- nextVariable
+            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
+            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{endIf}|]
+            appendLine [i|#{ifTrue}:|]
+            genStatement statement
+            appendLine [i|br label %#{endIf}|]
+            appendLine [i|#{endIf}:|]
+        StIfElse condition onTrue onFalse -> do
+            -- TODO: typecheck?
+            (conditionVar, typ) <- genExpr condition
+            ifTrue <- nextLabel
+            ifFalse <- nextLabel
+            endIfElse <- nextLabel
+            castToBool <- nextVariable
+            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
+            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{ifFalse}|]
+            appendLine [i|#{ifTrue}:|]
+            genStatement onTrue
+            appendLine [i|br label %#{endIfElse}|]
+            appendLine [i|#{ifFalse}:|]
+            genStatement onFalse
+            appendLine [i|br label %#{endIfElse}|]
+            appendLine [i|#{endIfElse}:|]
         StWhile _ _ -> undefined
         StRead _ -> undefined
-        StReturn -> undefined
+        StReturn ->
+            appendLine [i|br label #{endMainLabel}|]
         StDeclaration _ -> undefined
         StAssignment _ _ -> undefined
 
@@ -189,11 +215,26 @@ codegen (declarations, statements) =
         Addition left right -> do
             (labelLeft, typeLeft) <- genExpr left
             (labelRight, typeRight) <- genExpr right
-            value <- nextLabel
             case (typeLeft, typeRight) of
                 (TypeInt, TypeInt) -> do
+                    value <- nextVariable
                     appendLine [i|#{value} = add i32 #{labelLeft}, #{labelRight}|]
                     return (value, TypeInt)
+                (TypeDouble, TypeInt) ->
+                    castAndAdd labelLeft labelRight
+                (TypeInt, TypeDouble) ->
+                    castAndAdd labelRight labelLeft
+                _ ->
+                    -- TODO: type errors
+                    return undefined
+          where
+            castAndAdd :: Text -> Text -> State CodeGen (Text, VarType)
+            castAndAdd labelDouble labelInt = do
+                castLabel <- nextVariable
+                appendLine [i|#{castLabel} = sitofp i32 #{labelInt} to double|]
+                label <- nextVariable
+                appendLine [i|#{label} = fadd double #{castLabel}, #{labelDouble}|]
+                return (label, TypeDouble)
         Subtraction _ _ -> undefined
         GreaterThen _ _ -> undefined
         GreaterThenEq _ _ -> undefined
@@ -205,81 +246,87 @@ codegen (declarations, statements) =
         LogicAnd _ _ -> undefined
         Identifier _ -> undefined
         IntLiteral n -> do
-            labelPtr <- nextLabel
+            labelPtr <- nextVariable
             appendLine [i|#{labelPtr} = alloca i32|]
             appendLine [i|store i32 #{n}, ptr #{labelPtr}|]
-            labelValue <- nextLabel
+            labelValue <- nextVariable
             appendLine [i|#{labelValue} = load i32, ptr #{labelPtr}|]
             return (labelValue, TypeInt)
         DoubleLiteral d -> do
-            labelPtr <- nextLabel
+            labelPtr <- nextVariable
             appendLine [i|#{labelPtr} = alloca double|]
             appendLine [i|store double #{d}, ptr #{labelPtr}|]
-            labelValue <- nextLabel
+            labelValue <- nextVariable
             appendLine [i|#{labelValue} = load double, ptr #{labelPtr}|]
             return (labelValue, TypeDouble)
         BoolLiteral b -> do
             -- TODO: don't allocate memory for constants/literals
-            labelPtr <- nextLabel
+            labelPtr <- nextVariable
             appendLine [i|#{labelPtr} = alloca i8|]
             let bit :: Text = if b then "1" else "0"
             appendLine [i|store i8 #{bit}, ptr #{labelPtr}|]
-            labelValue <- nextLabel
+            labelValue <- nextVariable
             appendLine [i|#{labelValue} = load i8, ptr #{labelPtr}|]
             return (labelValue, TypeBool)
 
--- store i32 %5, ptr %2, align 4
---
+endMainLabel :: Text
+endMainLabel = "END_MAIN"
 
--- %1 = alloca i32, align 4
--- %2 = alloca i32, align 4
--- store i32 0, ptr %1, align 4
--- store i32 3, ptr %2, align 4
--- %3 = load i32, ptr %2, align 4
-
--- genExpr :: Expression -> State CodeGen ValueLabel
--- genExpr = \case
---     Addition (IntLiteral left) (IntLiteral right) ->
---         ([[i|%_ret = add i32 #{left}, #{right} ; #{left} + #{right}|]], "%_ret", TypeInt)
---     IntLiteral n -> (one [i|call i32 @printf(ptr @.int_printing, i32 #{n}) ; write #{n}|], undefined, undefined)
---     DoubleLiteral d -> ([[i|call i32 (ptr, ...) @printf(ptr @.double_printing, double #{d}) ; write #{d}|]], undefined, undefined)
---     BoolLiteral b -> ([[i|call i32 @printf(ptr @#{pickLiteral b}) ; write #{b}|]], undefined, undefined)
---       where
---         pickLiteral :: Bool -> Text
---         pickLiteral bool = if b then ".true" else ".false"
 appendLines :: [Text] -> State CodeGen ()
 appendLines = mapM_ appendLine
 
 appendLine :: Text -> State CodeGen ()
 appendLine line = do
     CodeGen{codeLines} <- get
-    modify (\c -> c{codeLines = line : codeLines})
+    modify (\c -> c{codeLines = codeLines :|> line})
     return ()
+
+declareTextConstant :: Text -> State CodeGen Text
+declareTextConstant text = do
+    cg@CodeGen{textConstants} <- get
+    let n = Seq.length textConstants + 1
+        (constant, label) = buildConstant n text
+    put $
+        cg
+            { textConstants = textConstants :|> constant
+            }
+    return label
+
+buildConstant :: Int -> Text -> (Text, Text)
+buildConstant n text = (constant, label)
+  where
+    constant = [i|#{label} = private unnamed_addr constant [#{T.length text + 1} x i8] c"#{escaped}"|]
+    label = [i|@.str.#{n}|] :: Text
+    escaped = T.replace "\n" "\\0A" text <> "\\00"
 
 nextLabel :: State CodeGen Text
 nextLabel = do
-    CodeGen{counter} <- get
-    modify (\c -> c{counter = counter + 1})
-    return [i|%#{counter}|]
+    CodeGen{labelCounter} <- get
+    modify (\c -> c{labelCounter = labelCounter + 1})
+    return [i|jump_label_#{labelCounter}|]
+
+nextVariable :: State CodeGen Text
+nextVariable = do
+    CodeGen{statementCounter} <- get
+    modify (\c -> c{statementCounter = statementCounter + 1})
+    return [i|%#{statementCounter}|]
 
 type ValueLabel = (Text, VarType)
 
 data CodeGen = CodeGen
-    { codeLines :: ![Text] -- NOTE: the lines are reversed for performance
-    , counter :: Int
+    { codeLines :: Seq Text
+    , statementCounter :: Int
+    , labelCounter :: Int
     , indentationLevel :: Int
+    , textConstants :: Seq Text
     }
+
 newCodeGen :: CodeGen
 newCodeGen =
     CodeGen
-        { codeLines = []
-        , counter = 1
+        { codeLines = Seq.empty
+        , statementCounter = 1
+        , labelCounter = 1
         , indentationLevel = 0
+        , textConstants = Seq.empty
         }
-
-declareStrConstant :: Int -> Text -> Text
-declareStrConstant n text =
-    [i|@str#{n} = private unnamed_addr constant [#{len} x i8] c"#{escaped}"|]
-  where
-    len = T.length text + 1
-    escaped = T.replace "\n" "\\0A" text <> "\\00"
