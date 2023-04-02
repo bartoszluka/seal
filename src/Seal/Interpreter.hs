@@ -179,7 +179,7 @@ data Value = VInt Int | VDouble Double | VBool Bool
 justValue :: IsString s => Value -> s
 justValue (VInt i) = Relude.show i
 justValue (VDouble d) = Relude.show d
-justValue (VBool b) = Relude.show b
+justValue (VBool b) = if b then "true" else "false"
 
 showType :: IsString a => Value -> a
 showType (VInt _) = "int"
