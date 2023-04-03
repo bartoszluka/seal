@@ -33,7 +33,7 @@ main = do
                 case parseFile input of
                     Right program -> do
                         case typecheck program of
-                            Right compiled -> T.putStrLn $ codegen program
+                            Right () -> T.putStrLn $ codegen program
                             Left errors -> print errors
                     Left err -> putStrLn $ errorBundlePretty err
 

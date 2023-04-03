@@ -44,6 +44,7 @@ library
       base >=4.7 && <5
     , megaparsec
     , parser-combinators
+    , process
     , relude
     , string-interpolate
     , text
@@ -66,6 +67,7 @@ executable seal-exe
       base >=4.7 && <5
     , megaparsec
     , parser-combinators
+    , process
     , relude
     , seal
     , string-interpolate
@@ -94,6 +96,7 @@ test-suite seal-test
     , hspec-contrib
     , megaparsec
     , parser-combinators
+    , process
     , raw-strings-qq
     , relude
     , seal

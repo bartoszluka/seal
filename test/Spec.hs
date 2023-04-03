@@ -1,17 +1,22 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 import Data.HashMap.Strict qualified as HM
 import Data.Text qualified as T
+import Data.Text.IO (hPutStrLn)
 import Relude
+import System.Exit (ExitCode (..))
+import System.IO (hClose, hGetContents)
+import System.Process
 import Test.Hspec
 import Test.Hspec.QuickCheck (prop)
 import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream, eof, parse, parseErrorPretty, parseMaybe)
 import Text.Printf
 import Text.RawString.QQ
 
-import Seal.Compiler (Error (..), typecheck)
+import Seal.Compiler (Error (..), codegen, typecheck)
 import Seal.Interpreter
 import Seal.Parser (
     Expression (..),
@@ -26,6 +31,7 @@ import Seal.Parser (
     intLiteral,
     parseFile,
  )
+import Text.Megaparsec.Error (errorBundlePretty)
 
 parseEither :: Parser a -> Text -> Either Text a
 parseEither parser input = mapError showError parsed
@@ -382,3 +388,40 @@ main = hspec $ do
             typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
         it "does not accept a program with int expression as a condition" $
             typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
+    describe "compiler" $ do
+        it "compiles a program that writes a number to stdout" $ do
+            "writeInt.seal" `programShouldReturn` "69"
+        it "compiles a program with if and write statements" $ do
+            "if.seal" `programShouldReturn` unlines ["got in true", "out of if"]
+  where
+
+    programShouldReturn :: FilePath -> Text -> IO ()
+    programShouldReturn filename expected = do
+        bytes <- readFileBS ("test/programs/" <> filename)
+        case generateCode bytes of
+            Left errors -> expectationFailure errors
+            Right generatedCode -> do
+                (output, exitCode) <- spawnAndPipe "lli" generatedCode
+                T.pack output `shouldBe` expected
+                exitCode `shouldBe` ExitSuccess
+
+    spawnAndPipe command toPipe = do
+        (Just hin, Just hout, _, ph) <-
+            createProcess
+                (proc command [])
+                    { std_in = CreatePipe
+                    , std_out = CreatePipe
+                    }
+        hPutStrLn hin toPipe
+        hClose hin
+        output <- hGetContents hout
+        exitCode <- waitForProcess ph
+        return (output, exitCode)
+
+    generateCode :: ByteString -> Either String Text
+    generateCode bytes = case parseFile (decodeUtf8 bytes) of
+        Right program -> do
+            case typecheck program of
+                Right () -> Right $ codegen program
+                Left errors -> Left $ show errors
+        Left errors -> Left $ errorBundlePretty errors

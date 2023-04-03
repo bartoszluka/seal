@@ -1,0 +1,5 @@
+program {
+    if(true)
+        write "got in true\n";
+    write "out of if\n";
+}
