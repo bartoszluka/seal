@@ -119,7 +119,7 @@ codegen (declarations, statements) =
               , "declare i32 @printf(ptr noundef, ...)"
               , "; constants for printfing values"
               , "@.int_printing = private unnamed_addr constant [3 x i8] c\"%d\\00\""
-              , "@.double_printing = private unnamed_addr constant [3 x i8] c\"%f\\00\""
+              , "@.double_printing = private unnamed_addr constant [3 x i8] c\"%g\\00\""
               , "@.str.s = private unnamed_addr constant [3 x i8] c\"%s\\00\""
               , "@.str.true = private unnamed_addr constant [5 x i8] c\"true\\00\""
               , "@.str.false = private unnamed_addr constant [6 x i8] c\"false\\00\""

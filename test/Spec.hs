@@ -388,21 +388,30 @@ main = hspec $ do
             typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
         it "does not accept a program with int expression as a condition" $
             typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
-    describe "compiler" $ do
-        it "compiles a program that writes a number to stdout" $ do
-            "writeInt.seal" `programShouldReturn` "69"
-        it "compiles a program with if and write statements" $ do
-            "if.seal" `programShouldReturn` unlines ["got in true", "out of if"]
+    parallel $ describe "compiler" $ do
+        it "writes 'hello, world!' to stdout" $
+            "programs/helloWorld.seal" `programShouldReturn` "hello, world!"
+        it "writes an int to stdout" $
+            "programs/writeInt.seal" `programShouldReturn` "69"
+        it "writes a double to stdout" $
+            "programs/writeDouble.seal" `programShouldReturn` "420.69"
+        it "writes a bool to stdout" $
+            "programs/writeBool.seal" `programShouldReturn` "true"
+        it "writes a sum of a double and an int to stdout" $
+            "programs/writeSum.seal" `programShouldReturn` "426.9"
+        it "if and write statements" $
+            "programs/if.seal" `programShouldReturn` unlines ["got in true", "out of if"]
+        it "if-else and write statements" $
+            "programs/ifElse.seal" `programShouldReturn` unlines ["got in else", "out of if-else"]
   where
-
     programShouldReturn :: FilePath -> Text -> IO ()
     programShouldReturn filename expected = do
-        bytes <- readFileBS ("test/programs/" <> filename)
+        bytes <- readFileBS ("test/" <> filename)
         case generateCode bytes of
             Left errors -> expectationFailure errors
             Right generatedCode -> do
                 (output, exitCode) <- spawnAndPipe "lli" generatedCode
-                T.pack output `shouldBe` expected
+                T.stripEnd (T.pack output) `shouldBe` T.stripEnd expected
                 exitCode `shouldBe` ExitSuccess
 
     spawnAndPipe command toPipe = do
