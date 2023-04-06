@@ -111,7 +111,10 @@ typecheck (declarations, statements) =
 codegen :: Program -> Text
 codegen (declarations, statements) =
     let
-        CodeGen{codeLines, textConstants} = execState (mapM_ genStatement statements) newCodeGen
+        CodeGen{codeLines, textConstants} =
+            flip execState newCodeGen $
+                mapM_ genStatement $
+                    map StDeclaration declarations <> statements
      in
         T.unlines
             . filter (/= T.empty)
@@ -139,11 +142,12 @@ codegen (declarations, statements) =
   where
     indentation = "    "
     indent = (indentation <>)
-    genStatement :: Statement -> State CodeGen ()
+    genStatement :: Statement -> State CodeGenState ()
     genStatement = \case
         StWriteText text -> do
             label <- declareTextConstant text
-            appendLine [i|call i32 @printf(ptr #{label})|]
+            value <- nextTemporaryVariable
+            appendLine [i|#{value} = call i32 @printf(ptr #{label})|]
             return ()
         StWriteExpr expr -> do
             (value, typ) <- genExpr expr
@@ -153,17 +157,20 @@ codegen (declarations, statements) =
                 TypeDouble ->
                     appendLine [i|call i32 (ptr, ...) @printf(ptr @.double_printing, double #{value})|]
                 TypeBool -> do
-                    labelCast <- nextVariable
+                    labelCast <- nextTemporaryVariable
                     appendLine [i|#{labelCast} = trunc i8 #{value} to i1|]
                     -- NOTE: if there is some pointer error, this maybe useful
                     -- labelCast2 <- nextVariable
                     -- appendLine [i|#{labelCast2} = zext i8 #{value} to i64|]
-                    labelSelect <- nextVariable
+                    labelSelect <- nextTemporaryVariable
                     appendLine [i|#{labelSelect} = select i1 #{labelCast}, ptr @.str.true, ptr @.str.false|]
-                    appendLine [i|call i32 (ptr, ...) @printf(ptr noundef @.str.s, ptr noundef #{labelSelect})|]
+
+                    value <- nextTemporaryVariable
+                    appendLine [i|#{value} = call i32 (ptr, ...) @printf(ptr noundef @.str.s, ptr noundef #{labelSelect})|]
 
                     return ()
-        StBlock _ -> undefined
+        StBlock stmts ->
+            mapM_ genStatement stmts
         StExpression expr ->
             genExpr expr $> ()
         StIf condition statement -> do
@@ -171,7 +178,7 @@ codegen (declarations, statements) =
             (conditionVar, typ) <- genExpr condition
             ifTrue <- nextLabel
             endIf <- nextLabel
-            castToBool <- nextVariable
+            castToBool <- nextTemporaryVariable
             appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
             appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{endIf}|]
             appendLine [i|#{ifTrue}:|]
@@ -184,7 +191,7 @@ codegen (declarations, statements) =
             ifTrue <- nextLabel
             ifFalse <- nextLabel
             endIfElse <- nextLabel
-            castToBool <- nextVariable
+            castToBool <- nextTemporaryVariable
             appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
             appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{ifFalse}|]
             appendLine [i|#{ifTrue}:|]
@@ -194,14 +201,40 @@ codegen (declarations, statements) =
             genStatement onFalse
             appendLine [i|br label %#{endIfElse}|]
             appendLine [i|#{endIfElse}:|]
-        StWhile _ _ -> undefined
+        StWhile condition statement -> do
+            -- TODO: typecheck?
+            startWhile <- nextLabel
+            appendLine [i|br label %#{startWhile}|]
+            appendLine [i|#{startWhile}:|]
+            (conditionVar, typ) <- genExpr condition
+            ifTrue <- nextLabel
+            endWhile <- nextLabel
+            castToBool <- nextTemporaryVariable
+            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
+
+            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{endWhile}|]
+            appendLine [i|#{ifTrue}:|]
+            genStatement statement
+
+            appendLine [i|br label %#{startWhile}|]
+            appendLine [i|#{endWhile}:|]
         StRead _ -> undefined
         StReturn ->
             appendLine [i|br label #{endMainLabel}|]
-        StDeclaration _ -> undefined
-        StAssignment _ _ -> undefined
+        StDeclaration (name, typ) -> do
+            let var = variableName name
+            declareVariable name typ
+            appendLine [i|#{var} = alloca #{getLlvmType typ}|]
+        StAssignment name expr -> do
+            (value, typ) <- genExpr expr
+            let var = variableName name
+            result <- assignVariable name
+            case result of
+                Right () -> appendLine [i|store #{getLlvmType typ} #{value}, ptr #{var}|]
+                --  TODO: errors
+                Left notFound -> undefined
 
-    genExpr :: Expression -> State CodeGen ValueLabel
+    genExpr :: Expression -> State CodeGenState ValueLabel
     genExpr = \case
         UnaryMinus _ -> undefined
         BitwiseNeg _ -> undefined
@@ -217,7 +250,7 @@ codegen (declarations, statements) =
             (labelRight, typeRight) <- genExpr right
             case (typeLeft, typeRight) of
                 (TypeInt, TypeInt) -> do
-                    value <- nextVariable
+                    value <- nextTemporaryVariable
                     appendLine [i|#{value} = add i32 #{labelLeft}, #{labelRight}|]
                     return (value, TypeInt)
                 (TypeDouble, TypeInt) ->
@@ -228,60 +261,110 @@ codegen (declarations, statements) =
                     -- TODO: type errors
                     return undefined
           where
-            castAndAdd :: Text -> Text -> State CodeGen (Text, VarType)
+            castAndAdd :: Text -> Text -> State CodeGenState (Text, VarType)
             castAndAdd labelDouble labelInt = do
-                castLabel <- nextVariable
+                castLabel <- nextTemporaryVariable
                 appendLine [i|#{castLabel} = sitofp i32 #{labelInt} to double|]
-                label <- nextVariable
+                label <- nextTemporaryVariable
                 appendLine [i|#{label} = fadd double #{castLabel}, #{labelDouble}|]
                 return (label, TypeDouble)
         Subtraction _ _ -> undefined
         GreaterThen _ _ -> undefined
         GreaterThenEq _ _ -> undefined
-        LessThen _ _ -> undefined
+        LessThen left right -> do
+            (valL, typeL) <- genExpr left
+            (valR, typeR) <- genExpr right
+            --  TODO: typechecking
+
+            result<- nextTemporaryVariable
+            appendLine [i|#{result} = icmp slt i32 #{valL}, #{valR}|]
+            return (result, TypeBool)
         LessThenEq _ _ -> undefined
-        Equal _ _ -> undefined
-        NotEqual _ _ -> undefined
+        Equal left right -> do
+            (valL, typeL) <- genExpr left
+            (valR, typeR) <- genExpr right
+            --  TODO: typechecking
+
+            result<- nextTemporaryVariable
+            appendLine [i|#{result} = icmp eq i32 #{valL}, #{valR}|]
+            return (result, TypeBool)
+        NotEqual left right -> do
+            (valL, typeL) <- genExpr left
+            (valR, typeR) <- genExpr right
+            --  TODO: typechecking
+
+            result<- nextTemporaryVariable
+            appendLine [i|#{result} = icmp ne i32 #{valL}, #{valR}|]
+            return (result, TypeBool)
+
         LogicOr _ _ -> undefined
         LogicAnd _ _ -> undefined
-        Identifier _ -> undefined
+        Identifier name -> do
+            mbType <- getVariable name
+            case mbType of
+                --  TODO: errors
+                Nothing -> undefined
+                Just typ -> do
+                    labelValue <- nextTemporaryVariable
+                    appendLine [i|#{labelValue} = load #{getLlvmType typ}, ptr #{variableName name}|]
+                    return (labelValue, typ)
         IntLiteral n -> do
-            labelPtr <- nextVariable
+            labelPtr <- nextTemporaryVariable
             appendLine [i|#{labelPtr} = alloca i32|]
             appendLine [i|store i32 #{n}, ptr #{labelPtr}|]
-            labelValue <- nextVariable
+            labelValue <- nextTemporaryVariable
             appendLine [i|#{labelValue} = load i32, ptr #{labelPtr}|]
             return (labelValue, TypeInt)
         DoubleLiteral d -> do
-            labelPtr <- nextVariable
+            labelPtr <- nextTemporaryVariable
             appendLine [i|#{labelPtr} = alloca double|]
             appendLine [i|store double #{d}, ptr #{labelPtr}|]
-            labelValue <- nextVariable
+            labelValue <- nextTemporaryVariable
             appendLine [i|#{labelValue} = load double, ptr #{labelPtr}|]
             return (labelValue, TypeDouble)
         BoolLiteral b -> do
             -- TODO: don't allocate memory for constants/literals
-            labelPtr <- nextVariable
+            labelPtr <- nextTemporaryVariable
             appendLine [i|#{labelPtr} = alloca i8|]
             let bit :: Text = if b then "1" else "0"
             appendLine [i|store i8 #{bit}, ptr #{labelPtr}|]
-            labelValue <- nextVariable
+            labelValue <- nextTemporaryVariable
             appendLine [i|#{labelValue} = load i8, ptr #{labelPtr}|]
             return (labelValue, TypeBool)
+
+getLlvmType :: VarType -> Text
+getLlvmType = \case
+    TypeInt -> "i32"
+    TypeBool -> "i8"
+    TypeDouble -> "double"
+
+assignVariable :: Identifier -> State CodeGenState (Either Identifier ())
+assignVariable name = do
+    CodeGen{variables} <- get
+    case HM.lookup name variables of
+        Just typ -> do
+            modify (\c -> c{variables = HM.insert name typ variables})
+            return $ Right ()
+        Nothing -> return $ Left name
+
+declareVariable :: Identifier -> VarType -> State CodeGenState ()
+declareVariable name typ = do
+    CodeGen{variables} <- get
+    modify (\c -> c{variables = HM.insert name (Left typ) variables})
 
 endMainLabel :: Text
 endMainLabel = "END_MAIN"
 
-appendLines :: [Text] -> State CodeGen ()
+appendLines :: [Text] -> State CodeGenState ()
 appendLines = mapM_ appendLine
 
-appendLine :: Text -> State CodeGen ()
+appendLine :: Text -> State CodeGenState ()
 appendLine line = do
     CodeGen{codeLines} <- get
     modify (\c -> c{codeLines = codeLines :|> line})
     return ()
 
-declareTextConstant :: Text -> State CodeGen Text
+declareTextConstant :: Text -> State CodeGenState Text
 declareTextConstant text = do
     cg@CodeGen{textConstants} <- get
     let n = Seq.length textConstants + 1
@@ -299,29 +382,38 @@ buildConstant n text = (constant, label)
     label = [i|@.str.#{n}|] :: Text
     escaped = T.replace "\n" "\\0A" text <> "\\00"
 
-nextLabel :: State CodeGen Text
+nextLabel :: State CodeGenState Text
 nextLabel = do
     CodeGen{labelCounter} <- get
     modify (\c -> c{labelCounter = labelCounter + 1})
     return [i|jump_label_#{labelCounter}|]
 
-nextVariable :: State CodeGen Text
-nextVariable = do
+nextTemporaryVariable :: State CodeGenState Text
+nextTemporaryVariable = do
     CodeGen{statementCounter} <- get
     modify (\c -> c{statementCounter = statementCounter + 1})
     return [i|%#{statementCounter}|]
 
+variableName :: Text -> Text
+variableName name = [i|%.uservar.#{name}|]
+
+getVariable :: Text -> State CodeGenState (Maybe VarType)
+getVariable name = do
+    CodeGen{variables} <- get
+    return $ either id id <$> HM.lookup name variables
+
 type ValueLabel = (Text, VarType)
 
-data CodeGen = CodeGen
+data CodeGenState = CodeGen
     { codeLines :: Seq Text
     , statementCounter :: Int
     , labelCounter :: Int
     , indentationLevel :: Int
     , textConstants :: Seq Text
+    , variables :: HashMap Identifier (Either VarType VarType)
     }
 
-newCodeGen :: CodeGen
+newCodeGen :: CodeGenState
 newCodeGen =
     CodeGen
         { codeLines = Seq.empty
@@ -329,4 +421,5 @@ newCodeGen =
         , labelCounter = 1
         , indentationLevel = 0
         , textConstants = Seq.empty
+        , variables = HM.empty
         }
