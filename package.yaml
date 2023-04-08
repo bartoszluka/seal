@@ -66,8 +66,15 @@ tests:
       - -with-rtsopts=-N
     dependencies:
       - seal
-      - hspec
-      - hspec-contrib
-      - QuickCheck
-      - HUnit
+      - filepath
+      - directory
       - raw-strings-qq
+      - HUnit
+      - hspec
+      - hspec-core
+      - hspec-contrib
+      - hspec-golden
+      - hspec-megaparsec
+      - tasty-silver
+      # - hspec-smallcheck
+      # - smallcheck

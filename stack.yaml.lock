@@ -3,10 +3,21 @@
 # For more information, please see the documentation at:
 #   https://docs.haskellstack.org/en/stable/lock_files
 
-packages: []
+packages:
+- completed:
+    commit: 489cbe49afb5f7c92af99a6c540d89de293109d3
+    git: https://github.com/bartoszluka/hspec-golden.git
+    name: hspec-golden
+    pantry-tree:
+      sha256: e80d58e8e12d1f4dc0c0cc775bdac22a3f92278df8e18400b4655eb683c1e43a
+      size: 3094
+    version: 0.2.0.1
+  original:
+    commit: 489cbe49afb5f7c92af99a6c540d89de293109d3
+    git: https://github.com/bartoszluka/hspec-golden.git
 snapshots:
 - completed:
-    sha256: adbc602422dde10cc330175da7de8609e70afc41449a7e2d6e8b1827aa0e5008
-    size: 649342
-    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/20/11.yaml
-  original: lts-20.11
+    sha256: 14ca51a9a597c32dd7804c10d079feea3d0ae40c5fbbb346cbd67b3ae49f6d01
+    size: 649598
+    url: https://raw.githubusercontent.com/commercialhaskell/stackage-snapshots/master/lts/20/17.yaml
+  original: lts-20.17

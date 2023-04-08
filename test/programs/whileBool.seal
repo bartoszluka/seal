@@ -1,0 +1,12 @@
+program {
+    bool b;
+    b = true;
+    while (b)
+    {
+        write b;
+        b = false;
+        write "\n";
+        write b;
+        write "\n";
+    }
+}

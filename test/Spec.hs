@@ -2,25 +2,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskellQuotes #-}
 
-import Data.HashMap.Strict qualified as HM
-import Data.Text qualified as T
-import Data.Text.IO (hPutStrLn)
 import Relude
-import System.Exit (ExitCode (..))
-import System.IO (hClose, hGetContents)
-import System.Process
-import Test.Hspec
-import Test.Hspec.QuickCheck (prop)
-import Text.Megaparsec (ParseErrorBundle (..), ShowErrorComponent, VisualStream, eof, parse, parseErrorPretty, parseMaybe)
-import Text.Printf
-import Text.RawString.QQ
 
 import Seal.Compiler (Error (..), codegen, typecheck)
 import Seal.Interpreter
 import Seal.Parser (
     Expression (..),
     Parser,
+    ParserError,
     Statement (..),
     VarType (..),
     boolLiteral,
@@ -31,25 +22,32 @@ import Seal.Parser (
     intLiteral,
     parseFile,
  )
-import Text.Megaparsec.Error (errorBundlePretty)
 
-parseEither :: Parser a -> Text -> Either Text a
-parseEither parser input = mapError showError parsed
-  where
-    parsed = parse (parser <* eof) "" input
-    mapError function err = case err of
-        Left l -> Left $ function l
-        Right ok -> Right ok
-    showError :: forall s e. (VisualStream s, ShowErrorComponent e) => ParseErrorBundle s e -> Text
-    showError (ParseErrorBundle{bundleErrors = errors}) =
-        T.concat
-            . toList
-            . fmap (replacements . T.pack . parseErrorPretty)
-            $ errors
-    replacements =
-        T.replace "offset=" ""
-            . T.replace "\"" "'"
-            . T.replace "\n" " "
+import Data.HashMap.Strict qualified as HM
+import Data.Text qualified as T
+import Data.Text.IO (hPutStrLn)
+import Data.Text.IO qualified as T
+import Relude.Unsafe qualified as Unsafe
+import System.Directory (listDirectory, withCurrentDirectory)
+import System.Exit (ExitCode (..))
+import System.FilePath (addExtension, isExtensionOf, replaceExtension, takeBaseName, (-<.>), (</>))
+import System.IO (hClose, hGetContents)
+import System.IO.Unsafe (unsafePerformIO)
+import System.Process
+import Test.HUnit (assertFailure)
+import Test.Hspec
+import Test.Hspec.Core.Spec (fromSpecList, specItem)
+import Test.Hspec.Golden
+import Test.Hspec.Megaparsec (shouldFailOn, shouldParse)
+import Test.Hspec.QuickCheck (prop)
+import Test.Tasty.Silver
+import Text.Megaparsec (eof, parse)
+import Text.Megaparsec.Error (errorBundlePretty)
+import Text.Printf
+import Text.RawString.QQ
+
+only :: Parser a -> Text -> Either ParserError a
+only parser = parse (parser <* eof) ""
 
 main :: IO ()
 main = hspec $ do
@@ -57,15 +55,15 @@ main = hspec $ do
         describe "program" $ do
             it "parses program with no statements" $
                 parseFile "program{}" `shouldSatisfy` isRight
-            it "parses program with no statements and some whitespace" $ do
+            it "parses program with no statements and some whitespace" $
                 parseFile
                     [r|program {
 
                     }
                     |]
-                    `shouldSatisfy` isRight
+                    `shouldParse` ([], [])
 
-            it "parses program with declarations" $ do
+            it "parses program with declarations" $
                 parseFile
                     [r|program {
                         int i; double d;
@@ -73,9 +71,16 @@ main = hspec $ do
                         bool doopy;
                     }
                     |]
-                    `shouldBe` Right ([("i", TypeInt), ("d", TypeDouble), ("c", TypeBool), ("doopy", TypeBool)], [])
+                    `shouldParse` (
+                                      [ ("i", TypeInt)
+                                      , ("d", TypeDouble)
+                                      , ("c", TypeBool)
+                                      , ("doopy", TypeBool)
+                                      ]
+                                  , []
+                                  )
 
-            it "parses program with declarations and comments" $ do
+            it "parses program with declarations and comments" $
                 parseFile
                     [r|// program start
                         program 
@@ -86,8 +91,15 @@ main = hspec $ do
                         }
                         //program end
                     |]
-                    `shouldBe` Right ([("i", TypeInt), ("d", TypeDouble), ("c", TypeBool), ("doopy", TypeBool)], [])
-            it "parses program with declarations and write statements" $ do
+                    `shouldParse` (
+                                      [ ("i", TypeInt)
+                                      , ("d", TypeDouble)
+                                      , ("c", TypeBool)
+                                      , ("doopy", TypeBool)
+                                      ]
+                                  , []
+                                  )
+            it "parses program with declarations and write statements" $
                 parseFile
                     [r| program 
                         {
@@ -95,8 +107,8 @@ main = hspec $ do
                             write "dupa";
                         }
                     |]
-                    `shouldBe` Right ([("i", TypeInt)], [StWriteText "dupa"])
-            it "parses program with declarations, write statement, read statement and return" $ do
+                    `shouldParse` ([("i", TypeInt)], [StWriteText "dupa"])
+            it "parses program with declarations, write statement, read statement and return" $
                 parseFile
                     [r| program 
                         {
@@ -106,16 +118,16 @@ main = hspec $ do
                             return;
                         }
                     |]
-                    `shouldBe` Right ([("i", TypeInt)], [StWriteText "dupa", StRead "dupa", StReturn])
-            it "parses program with write statements that takes an expression" $ do
+                    `shouldParse` ([("i", TypeInt)], [StWriteText "dupa", StRead "dupa", StReturn])
+            it "parses program with write statements that takes an expression" $
                 parseFile
                     [r| program 
                         {
                             write w;
                         }
                     |]
-                    `shouldBe` Right ([], [StWriteExpr (Identifier "w")])
-            it "parses a program with an if statement" $ do
+                    `shouldParse` ([], [StWriteExpr (Identifier "w")])
+            it "parses a program with an if statement" $
                 parseFile
                     [r| program 
                         {
@@ -123,8 +135,8 @@ main = hspec $ do
                                  read anotherBook;
                         }
                     |]
-                    `shouldBe` Right ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
-            it "parses a program with an if-else statement" $ do
+                    `shouldParse` ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
+            it "parses a program with an if-else statement" $
                 parseFile
                     [r| program 
                         {
@@ -134,16 +146,15 @@ main = hspec $ do
                                  allGood;
                         }
                     |]
-                    `shouldBe` Right
-                        ( []
-                        ,
-                            [ StIfElse
-                                (Identifier "harryPotter")
-                                (StRead "anotherBook")
-                                (StExpression (Identifier "allGood"))
-                            ]
-                        )
-            it "parses a program with a nested if-else statement" $ do
+                    `shouldParse` ( []
+                                  ,
+                                      [ StIfElse
+                                            (Identifier "harryPotter")
+                                            (StRead "anotherBook")
+                                            (StExpression (Identifier "allGood"))
+                                      ]
+                                  )
+            it "parses a program with a nested if-else statement" $
                 parseFile
                     [r| program 
                         {
@@ -154,19 +165,18 @@ main = hspec $ do
                                      allGood;
                         }
                     |]
-                    `shouldBe` Right
-                        ( []
-                        ,
-                            [ StIf
-                                (Identifier "harryPotter")
-                                ( StIfElse
-                                    (GreaterThen (Identifier "count") (IntLiteral 2))
-                                    (StRead "anotherBook")
-                                    (StExpression (Identifier "allGood"))
-                                )
-                            ]
-                        )
-            it "parses a program with a while statement" $ do
+                    `shouldParse` ( []
+                                  ,
+                                      [ StIf
+                                            (Identifier "harryPotter")
+                                            ( StIfElse
+                                                (GreaterThen (Identifier "count") (IntLiteral 2))
+                                                (StRead "anotherBook")
+                                                (StExpression (Identifier "allGood"))
+                                            )
+                                      ]
+                                  )
+            it "parses a program with a while statement" $
                 parseFile
                     [r| program 
                         {
@@ -174,170 +184,149 @@ main = hspec $ do
                                  write code;
                         }
                     |]
-                    `shouldBe` Right ([], [StWhile (Identifier "alive") (StWriteExpr (Identifier "code"))])
+                    `shouldParse` ([], [StWhile (Identifier "alive") (StWriteExpr (Identifier "code"))])
         describe "identifiers" $ do
-            it "parses identifiers with only letters" $ do
-                parseEither identifierName "abcd" `shouldBe` Right "abcd"
-            it "parses identifiers with letters and numbers" $ do
-                parseEither identifierName "ABCeJP2gmD" `shouldBe` Right "ABCeJP2gmD"
-            it "does not parse identifiers with '_' (underscore)" $ do
-                parseEither identifierName "_AbCd_234" `shouldNotBe` Right "_AbCd_234"
-            it "does not parse identifiers that start with numbers" $ do
-                parseEither identifierName "2344AbCd234" `shouldSatisfy` isLeft
+            it "parses identifiers with only letters" $ only identifierName "abcd" `shouldParse` "abcd"
+            it "parses identifiers with letters and numbers" $ only identifierName "ABCeJP2gmD" `shouldParse` "ABCeJP2gmD"
+            it "does not parse identifiers with '_' (underscore)" $ only identifierName `shouldFailOn` "_AbCd_234"
+            it "does not parse identifiers that start with numbers" $ only identifierName `shouldFailOn` "2344AbCd234"
 
         describe "declarations" $ do
             it "parses declaration of an int variable" $
-                parseMaybe declaration "int i;" `shouldBe` Just ("i", TypeInt)
-            it "parses declaration of an int variable with different ammount of whitespace" $ do
-                parseEither
+                only declaration "int i;" `shouldParse` ("i", TypeInt)
+            it "parses declaration of an int variable with different ammount of whitespace" $
+                only
                     declaration
                     [r|int     
                                     abcd123
                                     
                                     ;|]
-                    `shouldBe` Right ("abcd123", TypeInt)
+                    `shouldParse` ("abcd123", TypeInt)
             it "parses declaration of a 'double' variable" $
-                parseMaybe declaration "double i;" `shouldBe` Just ("i", TypeDouble)
+                only declaration "double i;" `shouldParse` ("i", TypeDouble)
             it "parses declaration of a 'bool' variable" $
-                parseMaybe declaration "bool i;" `shouldBe` Just ("i", TypeBool)
+                only declaration "bool i;" `shouldParse` ("i", TypeBool)
 
         describe "expressions" $ do
             describe "int literals" $ do
                 it "parses 1 as int" $
-                    parseEither intLiteral "1" `shouldBe` Right (IntLiteral 1)
+                    only intLiteral "1" `shouldParse` IntLiteral 1
                 it "parses 69 as int" $
-                    parseEither intLiteral "69" `shouldBe` Right (IntLiteral 69)
+                    only intLiteral "69" `shouldParse` IntLiteral 69
                 it "parses 10000 as int" $
-                    parseEither intLiteral "10000" `shouldBe` Right (IntLiteral 10000)
+                    only intLiteral "10000" `shouldParse` IntLiteral 10000
                 it "parses 0 as int" $
-                    parseEither intLiteral "0" `shouldBe` Right (IntLiteral 0)
+                    only intLiteral "0" `shouldParse` IntLiteral 0
                 prop "parses int literals" $
                     \a ->
                         let n = abs a
-                         in parseEither intLiteral (show n)
-                                `shouldBe` Right (IntLiteral n)
+                         in only intLiteral (show n) `shouldParse` IntLiteral n
 
             describe "bool literals" $ do
                 it "parses 'false' as bool" $
-                    parseEither boolLiteral "false" `shouldBe` Right (BoolLiteral False)
+                    only boolLiteral "false" `shouldParse` BoolLiteral False
                 it "parses 'true' as bool" $
-                    parseEither boolLiteral "true" `shouldBe` Right (BoolLiteral True)
+                    only boolLiteral "true" `shouldParse` BoolLiteral True
 
             describe "double literals" $ do
                 it "parses 1 as double" $
-                    parseEither doubleLiteral "1.0" `shouldBe` Right (DoubleLiteral 1)
+                    only doubleLiteral "1.0" `shouldParse` DoubleLiteral 1
                 it "parses 69 as double" $
-                    parseEither doubleLiteral "69.0" `shouldBe` Right (DoubleLiteral 69)
+                    only doubleLiteral "69.0" `shouldParse` DoubleLiteral 69
                 it "parses 10000 as double" $
-                    parseEither doubleLiteral "10000.0" `shouldBe` Right (DoubleLiteral 10000)
+                    only doubleLiteral "10000.0" `shouldParse` DoubleLiteral 10000
                 it "parses 0 as double" $
-                    parseEither doubleLiteral "0.0" `shouldBe` Right (DoubleLiteral 0)
+                    only doubleLiteral "0.0" `shouldParse` DoubleLiteral 0
                 prop "parses double literals" $
                     \x ->
                         let positive = abs x
-                         in parseEither doubleLiteral (T.pack $ printf "%f" positive)
-                                `shouldBe` Right (DoubleLiteral positive)
+                         in only doubleLiteral (T.pack $ printf "%f" positive)
+                                `shouldParse` DoubleLiteral positive
             describe "operators" $ do
                 describe "unary" $ do
                     it "parses an int cast" $
-                        parseEither expression "(int) a"
-                            `shouldBe` Right (IntCast (Identifier "a"))
+                        only expression "(int) a"
+                            `shouldParse` IntCast (Identifier "a")
 
                     it "parses a combination of unary operators with right associativity" $
-                        parseEither expression "- ~ !! ( int  ) -  (   double ) a  "
-                            `shouldBe` Right (UnaryMinus (BitwiseNeg (LogicalNeg (LogicalNeg (IntCast (UnaryMinus (DoubleCast (Identifier "a"))))))))
+                        only expression "- ~ !! ( int  ) -  (   double ) a  "
+                            `shouldParse` UnaryMinus (BitwiseNeg (LogicalNeg (LogicalNeg (IntCast (UnaryMinus (DoubleCast (Identifier "a")))))))
 
                     it "does not parse if there is no expression on the right" $
-                        parseEither expression "!(int)"
-                            `shouldSatisfy` isLeft
+                        only expression `shouldFailOn` "!(int)"
                 describe "bitwise binary" $ do
                     it "parses a bitwise multiplication operator" $
-                        parseEither expression "a & b"
-                            `shouldBe` Right (BitwiseMult (Identifier "a") (Identifier "b"))
+                        only expression "a & b"
+                            `shouldParse` BitwiseMult (Identifier "a") (Identifier "b")
 
                     it "parses a bitwise sum operator" $
-                        parseEither expression "a | b"
-                            `shouldBe` Right (BitwiseSum (Identifier "a") (Identifier "b"))
+                        only expression "a | b"
+                            `shouldParse` BitwiseSum (Identifier "a") (Identifier "b")
 
                     it "operations are left-associative" $
-                        parseEither expression "1 | 2 & 3"
-                            `shouldBe` Right
-                                ( BitwiseMult
-                                    (BitwiseSum (IntLiteral 1) (IntLiteral 2))
-                                    (IntLiteral 3)
-                                )
+                        only expression "1 | 2 & 3"
+                            `shouldParse` BitwiseMult
+                                (BitwiseSum (IntLiteral 1) (IntLiteral 2))
+                                (IntLiteral 3)
 
                     it "parses bitwise and unary operators in the same expression" $
-                        parseEither expression "1 | - 3 & ~false"
-                            `shouldBe` Right
-                                ( BitwiseMult
-                                    (BitwiseSum (IntLiteral 1) (UnaryMinus (IntLiteral 3)))
-                                    (BitwiseNeg (BoolLiteral False))
-                                )
+                        only expression "1 | - 3 & ~false"
+                            `shouldParse` BitwiseMult
+                                (BitwiseSum (IntLiteral 1) (UnaryMinus (IntLiteral 3)))
+                                (BitwiseNeg (BoolLiteral False))
                     it "allows overriding precedence with parens" $
-                        parseEither expression "!(1 | 2)"
-                            `shouldBe` Right
-                                (LogicalNeg (BitwiseSum (IntLiteral 1) (IntLiteral 2)))
+                        only expression "!(1 | 2)"
+                            `shouldParse` LogicalNeg (BitwiseSum (IntLiteral 1) (IntLiteral 2))
 
                 it "parses adding 2 numbers" $
-                    parseEither expression "0   + 6.9 " `shouldBe` Right (Addition (IntLiteral 0) (DoubleLiteral 6.9))
+                    only expression "0   + 6.9 " `shouldParse` Addition (IntLiteral 0) (DoubleLiteral 6.9)
                 it "parses comparing 2 numbers" $
-                    parseEither expression "1>0" `shouldBe` Right (GreaterThen (IntLiteral 1) (IntLiteral 0))
+                    only expression "1>0" `shouldParse` GreaterThen (IntLiteral 1) (IntLiteral 0)
                 it "parses addition and multiplication precedence" $
-                    parseEither expression "a   +2*3"
-                        `shouldBe` Right
-                            ( Addition
-                                (Identifier "a")
-                                ( Multiplication
-                                    (IntLiteral 2)
-                                    (IntLiteral 3)
-                                )
-                            )
-                it "parses overriding precedence with parens" $
-                    parseEither expression "(a+2)*3"
-                        `shouldBe` Right
+                    only expression "a   +2*3"
+                        `shouldParse` Addition
+                            (Identifier "a")
                             ( Multiplication
-                                ( Addition
-                                    (Identifier "a")
-                                    (IntLiteral 2)
-                                )
+                                (IntLiteral 2)
                                 (IntLiteral 3)
                             )
+                it "parses overriding precedence with parens" $
+                    only expression "(a+2)*3"
+                        `shouldParse` Multiplication
+                            ( Addition
+                                (Identifier "a")
+                                (IntLiteral 2)
+                            )
+                            (IntLiteral 3)
                 it "parses logic operators" $
-                    parseEither expression "a || true && false   "
-                        `shouldBe` Right
-                            ( LogicAnd
-                                ( LogicOr
-                                    (Identifier "a")
-                                    (BoolLiteral True)
-                                )
-                                (BoolLiteral False)
-                            )
-                it "distinguishes logic and bitwise operators" $
-                    parseEither expression "a | b || c & d && true"
-                        `shouldBe` Right
-                            ( LogicAnd
-                                ( LogicOr
-                                    (BitwiseSum (Identifier "a") (Identifier "b"))
-                                    (BitwiseMult (Identifier "c") (Identifier "d"))
-                                )
-                                (BoolLiteral True)
-                            )
-                it "parses all operators with correct precedence" $
-                    parseEither expression "a || b != c + d / e & f"
-                        `shouldBe` Right
+                    only expression "a || true && false   "
+                        `shouldParse` LogicAnd
                             ( LogicOr
                                 (Identifier "a")
-                                ( NotEqual
-                                    (Identifier "b")
-                                    ( Addition
-                                        (Identifier "c")
-                                        ( Division
-                                            (Identifier "d")
-                                            ( BitwiseMult
-                                                (Identifier "e")
-                                                (Identifier "f")
-                                            )
+                                (BoolLiteral True)
+                            )
+                            (BoolLiteral False)
+                it "distinguishes logic and bitwise operators" $
+                    only expression "a | b || c & d && true"
+                        `shouldParse` LogicAnd
+                            ( LogicOr
+                                (BitwiseSum (Identifier "a") (Identifier "b"))
+                                (BitwiseMult (Identifier "c") (Identifier "d"))
+                            )
+                            (BoolLiteral True)
+                it "parses all operators with correct precedence" $
+                    only expression "a || b != c + d / e & f"
+                        `shouldParse` LogicOr
+                            (Identifier "a")
+                            ( NotEqual
+                                (Identifier "b")
+                                ( Addition
+                                    (Identifier "c")
+                                    ( Division
+                                        (Identifier "d")
+                                        ( BitwiseMult
+                                            (Identifier "e")
+                                            (Identifier "f")
                                         )
                                     )
                                 )
@@ -388,49 +377,59 @@ main = hspec $ do
             typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
         it "does not accept a program with int expression as a condition" $
             typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
-    parallel $ describe "compiler" $ do
-        it "writes 'hello, world!' to stdout" $
-            "programs/helloWorld.seal" `programShouldReturn` "hello, world!"
-        it "writes an int to stdout" $
-            "programs/writeInt.seal" `programShouldReturn` "69"
-        it "writes a double to stdout" $
-            "programs/writeDouble.seal" `programShouldReturn` "420.69"
-        it "writes a bool to stdout" $
-            "programs/writeBool.seal" `programShouldReturn` "true"
-        it "writes a sum of a double and an int to stdout" $
-            "programs/writeSum.seal" `programShouldReturn` "426.9"
-        it "if and write statements" $
-            "programs/if.seal" `programShouldReturn` unlines ["got in true", "out of if"]
-        it "if-else and write statements" $
-            "programs/ifElse.seal" `programShouldReturn` unlines ["got in else", "out of if-else"]
+
+    describe "compiler" $ do
+        let directory = "test/programs"
+        sealFiles <- runIO $ findByExtension [".seal"] directory
+        fromSpecList $ map createTest sealFiles
   where
-    programShouldReturn :: FilePath -> Text -> IO ()
-    programShouldReturn filename expected = do
-        bytes <- readFileBS ("test/" <> filename)
-        case generateCode bytes of
-            Left errors -> expectationFailure errors
-            Right generatedCode -> do
-                (output, exitCode) <- spawnAndPipe "lli" generatedCode
-                T.stripEnd (T.pack output) `shouldBe` T.stripEnd expected
-                exitCode `shouldBe` ExitSuccess
+    createTest sealFile =
+        specItem (takeBaseName sealFile) $ runGoldenTestForFile sealFile
 
-    spawnAndPipe command toPipe = do
-        (Just hin, Just hout, _, ph) <-
-            createProcess
-                (proc command [])
-                    { std_in = CreatePipe
-                    , std_out = CreatePipe
-                    }
-        hPutStrLn hin toPipe
-        hClose hin
-        output <- hGetContents hout
-        exitCode <- waitForProcess ph
-        return (output, exitCode)
-
-    generateCode :: ByteString -> Either String Text
-    generateCode bytes = case parseFile (decodeUtf8 bytes) of
+runGoldenTestForFile :: FilePath -> IO (Golden Text)
+runGoldenTestForFile sealFile = do
+    input <- T.readFile sealFile
+    llvmCode <- failOnLeft $ generateCode input
+    let llFile = addExtension sealFile ".ll"
+    writeFileText llFile llvmCode
+    result <- testWithLli llFile
+    output <- failOnLeft result
+    return $ goldenTest sealFile (T.pack output)
+  where
+    generateCode :: Text -> Either String Text
+    generateCode input = case parseFile input of
         Right program -> do
             case typecheck program of
                 Right () -> Right $ codegen program
                 Left errors -> Left $ show errors
         Left errors -> Left $ errorBundlePretty errors
+    testWithLli llFile = do
+        (_, Just outHandle, Just errorHandle, processHandle) <-
+            createProcess
+                (proc "lli" [llFile])
+                    { std_out = CreatePipe
+                    , std_err = CreatePipe
+                    }
+        output <- hGetContents outHandle
+        errors <- hGetContents errorHandle
+        exitCode <- waitForProcess processHandle
+        return $ case exitCode of
+            ExitSuccess -> Right output
+            ExitFailure _ -> Left errors
+
+    goldenTest :: FilePath -> Text -> Golden Text
+    goldenTest name actualOutput =
+        Golden
+            { output = actualOutput
+            , encodePretty = T.unpack
+            , writeToFile = T.writeFile
+            , readFromFile = T.readFile
+            , goldenFile = addExtension name ".gold"
+            , actualFile = Nothing
+            , failFirstTime = True
+            }
+
+    failOnLeft :: (Show a) => Either String a -> IO a
+    failOnLeft result = do
+        result `shouldSatisfy` isRight
+        return $ Unsafe.fromJust $ rightToMaybe result

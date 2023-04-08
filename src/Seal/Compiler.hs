@@ -91,6 +91,7 @@ typecheck (declarations, statements) =
             scope <- get
             case HM.lookup ident scope of
                 Nothing -> err $ EUndeclared ident
+                --  TODO: make it an expression so we can have it assigned
                 Just _ -> ok
         StWriteExpr expr -> do
             scope <- get
@@ -152,21 +153,18 @@ codegen (declarations, statements) =
         StWriteExpr expr -> do
             (value, typ) <- genExpr expr
             case typ of
-                TypeInt ->
-                    appendLine [i|call i32 (ptr, ...) @printf(ptr @.int_printing, i32 #{value})|]
-                TypeDouble ->
-                    appendLine [i|call i32 (ptr, ...) @printf(ptr @.double_printing, double #{value})|]
+                TypeInt -> do
+                    tmp <- nextTemporaryVariable
+                    appendLine [i|#{tmp} = call i32 (ptr, ...) @printf(ptr @.int_printing, i32 #{value})|]
+                TypeDouble -> do
+                    tmp <- nextTemporaryVariable
+                    appendLine [i|#{tmp} = call i32 (ptr, ...) @printf(ptr @.double_printing, double #{value})|]
                 TypeBool -> do
-                    labelCast <- nextTemporaryVariable
-                    appendLine [i|#{labelCast} = trunc i8 #{value} to i1|]
-                    -- NOTE: if there is some pointer error, this maybe useful
-                    -- labelCast2 <- nextVariable
-                    -- appendLine [i|#{labelCast2} = zext i8 #{value} to i64|]
                     labelSelect <- nextTemporaryVariable
-                    appendLine [i|#{labelSelect} = select i1 #{labelCast}, ptr @.str.true, ptr @.str.false|]
+                    appendLine [i|#{labelSelect} = select i1 #{value}, ptr @.str.true, ptr @.str.false|]
 
-                    value <- nextTemporaryVariable
-                    appendLine [i|#{value} = call i32 (ptr, ...) @printf(ptr noundef @.str.s, ptr noundef #{labelSelect})|]
+                    tmp <- nextTemporaryVariable
+                    appendLine [i|#{tmp} = call i32 (ptr, ...) @printf(ptr noundef @.str.s, ptr noundef #{labelSelect})|]
 
                     return ()
         StBlock stmts ->
@@ -178,9 +176,7 @@ codegen (declarations, statements) =
             (conditionVar, typ) <- genExpr condition
             ifTrue <- nextLabel
             endIf <- nextLabel
-            castToBool <- nextTemporaryVariable
-            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
-            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{endIf}|]
+            appendLine [i|br i1 #{conditionVar}, label %#{ifTrue}, label %#{endIf}|]
             appendLine [i|#{ifTrue}:|]
             genStatement statement
             appendLine [i|br label %#{endIf}|]
@@ -191,9 +187,7 @@ codegen (declarations, statements) =
             ifTrue <- nextLabel
             ifFalse <- nextLabel
             endIfElse <- nextLabel
-            castToBool <- nextTemporaryVariable
-            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
-            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{ifFalse}|]
+            appendLine [i|br i1 #{conditionVar}, label %#{ifTrue}, label %#{ifFalse}|]
             appendLine [i|#{ifTrue}:|]
             genStatement onTrue
             appendLine [i|br label %#{endIfElse}|]
@@ -209,10 +203,8 @@ codegen (declarations, statements) =
             (conditionVar, typ) <- genExpr condition
             ifTrue <- nextLabel
             endWhile <- nextLabel
-            castToBool <- nextTemporaryVariable
-            appendLine [i|#{castToBool} = trunc i8 #{conditionVar} to i1|]
 
-            appendLine [i|br i1 #{castToBool}, label %#{ifTrue}, label %#{endWhile}|]
+            appendLine [i|br i1 #{conditionVar}, label %#{ifTrue}, label %#{endWhile}|]
             appendLine [i|#{ifTrue}:|]
             genStatement statement
 
@@ -220,7 +212,7 @@ codegen (declarations, statements) =
             appendLine [i|#{endWhile}:|]
         StRead _ -> undefined
         StReturn ->
-            appendLine [i|br label #{endMainLabel}|]
+            appendLine [i|br label %#{endMainLabel}|]
         StDeclaration (name, typ) -> do
             let var = variableName name
             declareVariable name typ
@@ -236,39 +228,98 @@ codegen (declarations, statements) =
 
     genExpr :: Expression -> State CodeGenState ValueLabel
     genExpr = \case
-        UnaryMinus _ -> undefined
-        BitwiseNeg _ -> undefined
-        LogicalNeg _ -> undefined
+        UnaryMinus expression -> do
+            (value, typ) <- genExpr expression
+            case typ of
+                TypeInt -> negateInt value
+                TypeDouble -> negateDouble value
+                TypeBool -> undefined
+        BitwiseNeg expression -> do
+            (value, typ) <- genExpr expression
+            result <- nextTemporaryVariable
+            case typ of
+                TypeInt -> do
+                    appendLine [i|#{result} = xor i32 -1, #{value}|]
+                    return (result, TypeInt)
+                TypeDouble -> undefined
+                TypeBool -> undefined
+        LogicalNeg expression -> do
+            (value, typ) <- genExpr expression
+            result <- nextTemporaryVariable
+            case typ of
+                TypeInt -> undefined
+                TypeDouble -> undefined
+                TypeBool -> do
+                    appendLine [i|#{result} = xor i1 1, #{value}|]
+                    return (result, TypeBool)
         IntCast _ -> undefined
         DoubleCast _ -> undefined
         BitwiseSum _ _ -> undefined
         BitwiseMult _ _ -> undefined
-        Multiplication _ _ -> undefined
-        Division _ _ -> undefined
-        Addition left right -> do
+        Multiplication left right -> do
             (labelLeft, typeLeft) <- genExpr left
             (labelRight, typeRight) <- genExpr right
             case (typeLeft, typeRight) of
                 (TypeInt, TypeInt) -> do
-                    value <- nextTemporaryVariable
-                    appendLine [i|#{value} = add i32 #{labelLeft}, #{labelRight}|]
-                    return (value, TypeInt)
+                    intOperation "mul" labelLeft labelRight
                 (TypeDouble, TypeInt) ->
-                    castAndAdd labelLeft labelRight
+                    castRightAndDo "fmul" labelLeft labelRight
                 (TypeInt, TypeDouble) ->
-                    castAndAdd labelRight labelLeft
+                    castLeftAndDo "fmul" labelLeft labelRight
+                (TypeDouble, TypeDouble) ->
+                    doubleOperation "fmul" labelRight labelLeft
                 _ ->
                     -- TODO: type errors
                     return undefined
-          where
-            castAndAdd :: Text -> Text -> State CodeGenState (Text, VarType)
-            castAndAdd labelDouble labelInt = do
-                castLabel <- nextTemporaryVariable
-                appendLine [i|#{castLabel} = sitofp i32 #{labelInt} to double|]
-                label <- nextTemporaryVariable
-                appendLine [i|#{label} = fadd double #{castLabel}, #{labelDouble}|]
-                return (label, TypeDouble)
-        Subtraction _ _ -> undefined
+        Division left right -> do
+            (labelLeft, typeLeft) <- genExpr left
+            (labelRight, typeRight) <- genExpr right
+            case (typeLeft, typeRight) of
+                (TypeInt, TypeInt) -> do
+                    intOperation "udiv" labelLeft labelRight
+                (TypeDouble, TypeInt) ->
+                    castRightAndDo "fdiv" labelLeft labelRight
+                (TypeInt, TypeDouble) ->
+                    castLeftAndDo "fdiv" labelLeft labelRight
+                (TypeDouble, TypeDouble) ->
+                    doubleOperation "fdiv" labelLeft labelRight
+                _ ->
+                    -- TODO: type errors
+                    return undefined
+        Addition left right -> do
+            (labelLeft, typeLeft) <- genExpr left
+            (labelRight, typeRight) <- genExpr right
+            case (typeLeft, typeRight) of
+                (TypeInt, TypeInt) ->
+                    intOperation "add" labelLeft labelRight
+                (TypeDouble, TypeInt) ->
+                    castRightAndDo "fadd" labelLeft labelRight
+                (TypeInt, TypeDouble) ->
+                    castLeftAndDo "fadd" labelLeft labelRight
+                (TypeDouble, TypeDouble) ->
+                    doubleOperation "fadd" labelLeft labelRight
+                _ ->
+                    -- TODO: type errors
+                    return undefined
+        Subtraction left right -> do
+            (labelLeft, typeLeft) <- genExpr left
+            (labelRight, typeRight) <- genExpr right
+            case (typeLeft, typeRight) of
+                (TypeInt, TypeInt) -> do
+                    (negated, _) <- negateInt labelRight
+                    intOperation "add" labelLeft negated
+                (TypeDouble, TypeInt) -> do
+                    (negated, _) <- negateInt labelRight
+                    castRightAndDo "fadd" labelLeft negated
+                (TypeInt, TypeDouble) -> do
+                    (negated, _) <- negateDouble labelRight
+                    castLeftAndDo "fadd" labelLeft negated
+                (TypeDouble, TypeDouble) -> do
+                    (negated, _) <- negateDouble labelRight
+                    doubleOperation "fadd" labelLeft negated
+                _ ->
+                    -- TODO: type errors
+                    return undefined
         GreaterThen _ _ -> undefined
         GreaterThenEq _ _ -> undefined
         LessThen left right -> do
@@ -276,7 +327,7 @@ codegen (declarations, statements) =
             (valR, typeR) <- genExpr right
             --  TODO: typechecking
 
-            result<- nextTemporaryVariable
+            result <- nextTemporaryVariable
             appendLine [i|#{result} = icmp slt i32 #{valL}, #{valR}|]
             return (result, TypeBool)
         LessThenEq _ _ -> undefined
@@ -285,7 +336,7 @@ codegen (declarations, statements) =
             (valR, typeR) <- genExpr right
             --  TODO: typechecking
 
-            result<- nextTemporaryVariable
+            result <- nextTemporaryVariable
             appendLine [i|#{result} = icmp eq i32 #{valL}, #{valR}|]
             return (result, TypeBool)
         NotEqual left right -> do
@@ -293,10 +344,9 @@ codegen (declarations, statements) =
             (valR, typeR) <- genExpr right
             --  TODO: typechecking
 
-            result<- nextTemporaryVariable
+            result <- nextTemporaryVariable
             appendLine [i|#{result} = icmp ne i32 #{valL}, #{valR}|]
             return (result, TypeBool)
-
         LogicOr _ _ -> undefined
         LogicAnd _ _ -> undefined
         Identifier name -> do
@@ -325,17 +375,53 @@ codegen (declarations, statements) =
         BoolLiteral b -> do
             -- TODO: don't allocate memory for constants/literals
             labelPtr <- nextTemporaryVariable
-            appendLine [i|#{labelPtr} = alloca i8|]
-            let bit :: Text = if b then "1" else "0"
-            appendLine [i|store i8 #{bit}, ptr #{labelPtr}|]
+            appendLine [i|#{labelPtr} = alloca i1|]
+            let bit :: Int = if b then 1 else 0
+            appendLine [i|store i1 #{bit}, ptr #{labelPtr}|]
             labelValue <- nextTemporaryVariable
-            appendLine [i|#{labelValue} = load i8, ptr #{labelPtr}|]
+            appendLine [i|#{labelValue} = load i1, ptr #{labelPtr}|]
             return (labelValue, TypeBool)
+      where
+        intOperation :: Text -> Text -> Text -> State CodeGenState (Text, VarType)
+        intOperation operation labelLeft labelRight = do
+            value <- nextTemporaryVariable
+            appendLine [i|#{value} = #{operation} i32 #{labelLeft}, #{labelRight}|]
+            return (value, TypeInt)
+        doubleOperation :: Text -> Text -> Text -> StateT CodeGenState Identity ValueLabel
+        doubleOperation operation labelLeft labelRight = do
+            label <- nextTemporaryVariable
+            appendLine [i|#{label} = #{operation} double #{labelLeft}, #{labelRight}|]
+            return (label, TypeDouble)
+        castLeftAndDo :: Text -> Text -> Text -> State CodeGenState (Text, VarType)
+        castLeftAndDo operation labelLeft labelRight = do
+            castLabel <- nextTemporaryVariable
+            appendLine [i|#{castLabel} = sitofp i32 #{labelLeft} to double|]
+            doubleOperation operation castLabel labelRight
+        castRightAndDo :: Text -> Text -> Text -> State CodeGenState (Text, VarType)
+        castRightAndDo operation labelLeft labelRight = do
+            castLabel <- nextTemporaryVariable
+            appendLine [i|#{castLabel} = sitofp i32 #{labelRight} to double|]
+            doubleOperation operation labelLeft castLabel
+
+        negateInt :: Text -> State CodeGenState (Text, VarType)
+        negateInt value = do
+            let largestInt = (2 :: Integer) ^ (32 :: Integer) - 1
+            -- 2^32 - 1 = 4294967295
+            xored <- nextTemporaryVariable
+            appendLine [i|#{xored} = xor i32 #{largestInt}, #{value}|]
+            result <- nextTemporaryVariable
+            appendLine [i|#{result} = add i32 1, #{xored}|]
+            return (result, TypeInt)
+        negateDouble :: Text -> State CodeGenState (Text, VarType)
+        negateDouble value = do
+            result <- nextTemporaryVariable
+            appendLine [i|#{result} = fneg double #{value}|]
+            return (result, TypeDouble)
 
 getLlvmType :: VarType -> Text
 getLlvmType = \case
     TypeInt -> "i32"
-    TypeBool -> "i8"
+    TypeBool -> "i1"
     TypeDouble -> "double"
 
 assignVariable :: Identifier -> State CodeGenState (Either Identifier ())

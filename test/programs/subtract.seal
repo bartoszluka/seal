@@ -1,0 +1,6 @@
+program {
+    write 21 - 37;
+    write "\n";
+    write 69 - 0;
+    write "\n";
+}

@@ -1,6 +1,6 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.0.
+-- This file has been generated from package.yaml by hpack version 0.35.1.
 --
 -- see: https://github.com/sol/hpack
 
@@ -90,10 +90,14 @@ test-suite seal-test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       HUnit
-    , QuickCheck
     , base >=4.7 && <5
+    , directory
+    , filepath
     , hspec
     , hspec-contrib
+    , hspec-core
+    , hspec-golden
+    , hspec-megaparsec
     , megaparsec
     , parser-combinators
     , process
@@ -101,5 +105,6 @@ test-suite seal-test
     , relude
     , seal
     , string-interpolate
+    , tasty-silver
     , text
   default-language: Haskell2010

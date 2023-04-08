@@ -1,0 +1,4 @@
+program {
+    write 21*37;
+    write "\n";
+}

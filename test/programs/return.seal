@@ -1,0 +1,4 @@
+program {
+    write "dupa\n";
+    return;
+}

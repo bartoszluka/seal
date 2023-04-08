@@ -1,0 +1,10 @@
+program {
+    int n;
+    n = 0;
+    while (n < 10)
+    {
+        n = n + 1;
+        write n;
+        write "\n";
+    }
+}

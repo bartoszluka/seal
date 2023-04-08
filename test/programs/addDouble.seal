@@ -1,0 +1,8 @@
+program {
+    write 10 + 6.9;
+    write "\n";
+    write 4.20 + 6.9;
+    write "\n";
+    write 6.9 + 1;
+    write "\n";
+}
