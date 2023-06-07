@@ -379,12 +379,9 @@ main = hspec $ do
             typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
 
     describe "compiler" $ do
-        let directory = "test/programs"
-        sealFiles <- runIO $ findByExtension [".seal"] directory
-        fromSpecList $ map createTest sealFiles
-  where
-    createTest sealFile =
-        specItem (takeBaseName sealFile) $ runGoldenTestForFile sealFile
+        sealFiles <- runIO $ findByExtension [".seal"] "test/programs/"
+        forM_ sealFiles $ \sealFile -> do
+            it (takeBaseName sealFile) $ runGoldenTestForFile sealFile
 
 runGoldenTestForFile :: FilePath -> IO (Golden Text)
 runGoldenTestForFile sealFile = do
