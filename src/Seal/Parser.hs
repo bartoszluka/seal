@@ -5,12 +5,15 @@
 module Seal.Parser (
     Declaration,
     Expression (..),
+    FunctionDefinition (..),
     Identifier,
+    LetBinding (..),
     Parser,
     ParserError,
     Program,
     Statement (..),
     VarType (..),
+    blockExpression,
     boolLiteral,
     declaration,
     doubleLiteral,
@@ -30,6 +33,7 @@ module Seal.Parser (
     unaryOp,
 ) where
 
+import Data.Char (isUpper)
 import Data.Text qualified as T
 import Relude hiding (Sum, many, some)
 import Relude.Unsafe as Unsafe
@@ -37,7 +41,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char (alphaNumChar, char, digitChar, letterChar, space1, string)
 import Text.Megaparsec.Char.Lexer qualified as L
 
-type Program = ([Declaration], [Statement])
+type Program = [FunctionDefinition]
 
 data Statement
     = StBlock [Statement]
@@ -57,7 +61,15 @@ type Identifier = Text
 
 type Declaration = (Identifier, VarType)
 
-data VarType = TypeBool | TypeInt | TypeDouble deriving (Eq, Show)
+data FunctionDefinition = FunctionDefinition
+    { functionName :: Identifier
+    , functionArgs :: [(Identifier, Maybe TypeName)]
+    , functionReturnType :: Maybe TypeName
+    , functionBody :: Expression
+    }
+    deriving (Eq, Show)
+
+data VarType = TypeBool | TypeInt | TypeDouble | TypeFunction FunctionDefinition deriving (Eq, Show)
 
 typeBool :: Identifier -> Declaration
 typeBool ident = (ident, TypeBool)
@@ -98,6 +110,11 @@ data Expression
     | IntLiteral Int
     | DoubleLiteral Double
     | BoolLiteral Bool
+    | Block [LetBinding] Expression
+    | FunctionCall Identifier [Expression]
+    deriving (Eq, Show)
+
+data LetBinding = LetBinding Identifier Expression
     deriving (Eq, Show)
 
 type Parser = Parsec Void Text
@@ -122,16 +139,37 @@ lexeme = L.lexeme spaceConsumer
 symbol :: Text -> Parser Text
 symbol = L.symbol spaceConsumer
 
-programParser :: Parser ([Declaration], [Statement])
+programParser :: Parser Program
 programParser = do
     spaceConsumer
-    _ <- symbol "program"
-    _ <- symbol "{"
-    declarations <- many declaration
-    statements <- many statement
-    _ <- symbol "}"
+    functions <- many functionDefinition
     eof
-    return (declarations, statements)
+    return functions
+
+functionDefinition :: Parser FunctionDefinition
+functionDefinition = do
+    keyword "fn"
+    name <- identifierName
+    args <- parens (sepEndBy argument (symbol ","))
+    returnType <- optional typeAnnotation
+    _ <- symbol "="
+    body <- expression
+
+    return
+        FunctionDefinition
+            { functionName = name
+            , functionArgs = args
+            , functionReturnType = returnType
+            , functionBody = body
+            }
+  where
+    typeAnnotation = symbol ":" >> typeName
+
+    argument :: Parser (Identifier, Maybe TypeName)
+    argument = do
+        name <- identifierName
+        typ <- optional typeAnnotation
+        return (name, typ)
 
 identifier :: Parser Expression
 identifier = Identifier <$> identifierName
@@ -186,23 +224,41 @@ expression = binaries
             right <- higherPrec
             return (op, right)
 
+blockExpression :: Parser Expression
+blockExpression = do
+    _ <- symbol "{"
+    letBindings <- many letBinding
+    expr <- expression
+    _ <- symbol "}"
+    return $ Block letBindings expr
+  where
+    letBinding :: Parser LetBinding
+    letBinding = do
+        keyword "let"
+        lhs <- identifierName
+        _ <- symbol "="
+        rhs <- expression
+        return $ LetBinding lhs rhs
+
+functionCall :: Parser Expression
+functionCall = do
+    functionName' <- identifierName
+    args <- parens $ sepEndBy1 expression (symbol ",")
+    return $ FunctionCall functionName' args
+
 term :: Parser Expression
 term =
     lexeme $
-        choice $
-            concat
-                [ [try unaryOp]
-                , terminals
-                , [parens expression]
-                ]
-
-terminals :: [Parser Expression]
-terminals =
-    [ boolLiteral
-    , try doubleLiteral
-    , intLiteral
-    , identifier
-    ]
+        choice
+            [ try unaryOp
+            , boolLiteral
+            , try doubleLiteral
+            , intLiteral
+            , try identifier
+            , try functionCall
+            , blockExpression
+            , parens expression
+            ]
 
 unaryOp :: Parser Expression
 unaryOp = do
@@ -359,6 +415,19 @@ declaration =
         ]
         <* symbol ";"
 
+type TypeName = Identifier
+typeName :: Parser TypeName
+typeName = lexeme ident <?> "type"
+  where
+    ident = do
+        firstChar <- capitalLetter
+        rest <- many alphaNumChar
+        return . T.pack $ firstChar : rest
+
+    capitalLetter :: Parser Char
+    capitalLetter = satisfy isUpper
+
+-- BUG: keywords can be identifier names
 identifierName :: Parser Identifier
 identifierName = lexeme ident <?> "identifier"
   where

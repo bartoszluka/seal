@@ -10,10 +10,13 @@ import Seal.Compiler (Error (..), codegen, typecheck)
 import Seal.Interpreter
 import Seal.Parser (
     Expression (..),
+    FunctionDefinition (..),
+    LetBinding (LetBinding),
     Parser,
     ParserError,
     Statement (..),
     VarType (..),
+    blockExpression,
     boolLiteral,
     declaration,
     doubleLiteral,
@@ -32,7 +35,6 @@ import System.Directory (listDirectory, withCurrentDirectory)
 import System.Exit (ExitCode (..))
 import System.FilePath (addExtension, isExtensionOf, replaceExtension, takeBaseName, (-<.>), (</>))
 import System.IO (hClose, hGetContents)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Process
 import Test.HUnit (assertFailure)
 import Test.Hspec
@@ -53,159 +55,181 @@ main :: IO ()
 main = hspec $ do
     describe "parsing" $ do
         describe "program" $ do
-            it "parses program with no statements" $
-                parseFile "program{}" `shouldSatisfy` isRight
             it "parses program with no statements and some whitespace" $
                 parseFile
-                    [r|program {
+                    [r||]
+                    `shouldParse` []
 
-                    }
-                    |]
-                    `shouldParse` ([], [])
-
-            it "parses program with declarations" $
+            it "parses program with empty main" $
                 parseFile
-                    [r|program {
-                        int i; double d;
-                        bool c;
-                        bool doopy;
+                    [r|fn main() = 69|]
+                    `shouldParse` [ FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "main"
+                                        , functionBody = IntLiteral 69
+                                        , functionArgs = []
+                                        }
+                                  ]
+
+            it "parses program with main with a block expression" $
+                parseFile
+                    [r|fn main() = {
+                        let i = 0
+                        let b = i
+                        420
                     }
                     |]
-                    `shouldParse` (
-                                      [ ("i", TypeInt)
-                                      , ("d", TypeDouble)
-                                      , ("c", TypeBool)
-                                      , ("doopy", TypeBool)
-                                      ]
-                                  , []
-                                  )
+                    `shouldParse` [ FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "main"
+                                        , functionBody =
+                                            Block
+                                                [LetBinding "i" (IntLiteral 0), LetBinding "b" (Identifier "i")]
+                                                (IntLiteral 420)
+                                        , functionArgs = []
+                                        }
+                                  ]
 
+            it "parses program with more functions" $
+                parseFile
+                    [r|
+                    fn dupa () = 69
+
+                    fn anotherOne (arg1, arg2) = 1
+
+                    fn main() = {
+                        let i = 0
+                        let b = i
+                        420
+                    }
+                    |]
+                    `shouldParse` [ FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "dupa"
+                                        , functionBody = IntLiteral 69
+                                        , functionArgs = []
+                                        }
+                                  , FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "anotherOne"
+                                        , functionBody = IntLiteral 1
+                                        , functionArgs = [("arg1", Nothing), ("arg2", Nothing)]
+                                        }
+                                  , FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "main"
+                                        , functionBody =
+                                            Block
+                                                [LetBinding "i" (IntLiteral 0), LetBinding "b" (Identifier "i")]
+                                                (IntLiteral 420)
+                                        , functionArgs = []
+                                        }
+                                  ]
+            it "parses program with more functions with arguments with types" $
+                parseFile
+                    [r|
+                    fn anotherOne (arg1: Dupa, arg2: Another) = 1
+
+                    fn main() = {
+                        let i = 0
+                        let b = i
+                        420
+                    }
+                    |]
+                    `shouldParse` [ FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "anotherOne"
+                                        , functionBody = IntLiteral 1
+                                        , functionArgs = [("arg1", Just "Dupa"), ("arg2", Just "Another")]
+                                        }
+                                  , FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "main"
+                                        , functionBody =
+                                            Block
+                                                [LetBinding "i" (IntLiteral 0), LetBinding "b" (Identifier "i")]
+                                                (IntLiteral 420)
+                                        , functionArgs = []
+                                        }
+                                  ]
             it "parses program with declarations and comments" $
                 parseFile
                     [r|// program start
-                        program 
-                        {
-                            int i;double d;
-                            bool c;
-                            bool doopy;
-                        }
+                        fn main() = 69
                         //program end
                     |]
-                    `shouldParse` (
-                                      [ ("i", TypeInt)
-                                      , ("d", TypeDouble)
-                                      , ("c", TypeBool)
-                                      , ("doopy", TypeBool)
-                                      ]
-                                  , []
-                                  )
-            it "parses program with declarations and write statements" $
-                parseFile
-                    [r| program 
-                        {
-                            int i;
-                            write "dupa";
-                        }
-                    |]
-                    `shouldParse` ([("i", TypeInt)], [StWriteText "dupa"])
-            it "parses program with declarations, write statement, read statement and return" $
-                parseFile
-                    [r| program 
-                        {
-                            int i;
-                            write "dupa";
-                            read dupa;
-                            return;
-                        }
-                    |]
-                    `shouldParse` ([("i", TypeInt)], [StWriteText "dupa", StRead "dupa", StReturn])
-            it "parses program with write statements that takes an expression" $
-                parseFile
-                    [r| program 
-                        {
-                            write w;
-                        }
-                    |]
-                    `shouldParse` ([], [StWriteExpr (Identifier "w")])
-            it "parses a program with an if statement" $
-                parseFile
-                    [r| program 
-                        {
-                             if(harryPotter)
-                                 read anotherBook;
-                        }
-                    |]
-                    `shouldParse` ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
-            it "parses a program with an if-else statement" $
-                parseFile
-                    [r| program 
-                        {
-                             if(harryPotter)
-                                 read anotherBook;
-                             else
-                                 allGood;
-                        }
-                    |]
-                    `shouldParse` ( []
-                                  ,
-                                      [ StIfElse
-                                            (Identifier "harryPotter")
-                                            (StRead "anotherBook")
-                                            (StExpression (Identifier "allGood"))
-                                      ]
-                                  )
-            it "parses a program with a nested if-else statement" $
-                parseFile
-                    [r| program 
-                        {
-                             if(harryPotter)
-                                 if(count>2)
-                                     read anotherBook;
-                                 else
-                                     allGood;
-                        }
-                    |]
-                    `shouldParse` ( []
-                                  ,
-                                      [ StIf
-                                            (Identifier "harryPotter")
-                                            ( StIfElse
-                                                (GreaterThen (Identifier "count") (IntLiteral 2))
-                                                (StRead "anotherBook")
-                                                (StExpression (Identifier "allGood"))
-                                            )
-                                      ]
-                                  )
-            it "parses a program with a while statement" $
-                parseFile
-                    [r| program 
-                        {
-                             while(alive)
-                                 write code;
-                        }
-                    |]
-                    `shouldParse` ([], [StWhile (Identifier "alive") (StWriteExpr (Identifier "code"))])
+                    `shouldParse` [ FunctionDefinition
+                                        { functionReturnType = Nothing
+                                        , functionName = "main"
+                                        , functionBody = IntLiteral 69
+                                        , functionArgs = []
+                                        }
+                                  ]
+        -- TODO: uncomment when implemented
+        -- it "parses a program with an if statement" $
+        --     parseFile
+        --         [r| program
+        --             {
+        --                 if(harryPotter)
+        --                      read anotherBook;
+        --                 then
+        --             }
+        --         |]
+        --         `shouldParse` ([], [StIf (Identifier "harryPotter") (StRead "anotherBook")])
+        -- it "parses a program with an if-else statement" $
+        --     parseFile
+        --         [r| program
+        --             {
+        --                  if(harryPotter)
+        --                      read anotherBook;
+        --                  else
+        --                      allGood;
+        --             }
+        --         |]
+        --         `shouldParse` ( []
+        --                       ,
+        --                           [ StIfElse
+        --                                 (Identifier "harryPotter")
+        --                                 (StRead "anotherBook")
+        --                                 (StExpression (Identifier "allGood"))
+        --                           ]
+        --                       )
+        -- it "parses a program with a nested if-else statement" $
+        --     parseFile
+        --         [r| program
+        --             {
+        --                  if(harryPotter)
+        --                      if(count>2)
+        --                          read anotherBook;
+        --                      else
+        --                          allGood;
+        --             }
+        --         |]
+        --         `shouldParse` ( []
+        --                       ,
+        --                           [ StIf
+        --                                 (Identifier "harryPotter")
+        --                                 ( StIfElse
+        --                                     (GreaterThen (Identifier "count") (IntLiteral 2))
+        --                                     (StRead "anotherBook")
+        --                                     (StExpression (Identifier "allGood"))
+        --                                 )
+        --                           ]
+        --                       )
+        -- it "parses a program with a while statement" $
+        --     parseFile
+        --         [r| program
+        --             {
+        --                  while(alive)
+        --                      write code;
+        --             }
+        --         |]
+        --         `shouldParse` ([], [StWhile (Identifier "alive") (StWriteExpr (Identifier "code"))])
         describe "identifiers" $ do
             it "parses identifiers with only letters" $ only identifierName "abcd" `shouldParse` "abcd"
             it "parses identifiers with letters and numbers" $ only identifierName "ABCeJP2gmD" `shouldParse` "ABCeJP2gmD"
             it "does not parse identifiers with '_' (underscore)" $ only identifierName `shouldFailOn` "_AbCd_234"
             it "does not parse identifiers that start with numbers" $ only identifierName `shouldFailOn` "2344AbCd234"
-
-        describe "declarations" $ do
-            it "parses declaration of an int variable" $
-                only declaration "int i;" `shouldParse` ("i", TypeInt)
-            it "parses declaration of an int variable with different ammount of whitespace" $
-                only
-                    declaration
-                    [r|int     
-                                    abcd123
-                                    
-                                    ;|]
-                    `shouldParse` ("abcd123", TypeInt)
-            it "parses declaration of a 'double' variable" $
-                only declaration "double i;" `shouldParse` ("i", TypeDouble)
-            it "parses declaration of a 'bool' variable" $
-                only declaration "bool i;" `shouldParse` ("i", TypeBool)
 
         describe "expressions" $ do
             describe "int literals" $ do
@@ -331,6 +355,26 @@ main = hspec $ do
                                     )
                                 )
                             )
+
+        describe "blocks" $ do
+            it "parses block expression with no let bindings" $ only blockExpression "{ 0 }" `shouldParse` Block [] (IntLiteral 0)
+            it "parses block expression with a let binding on the same line" $
+                only blockExpression "{ let a = 0 0 }" `shouldParse` Block [LetBinding "a" (IntLiteral 0)] (IntLiteral 0)
+
+            it "parses block expression with a let binding on different lines" $
+                only
+                    blockExpression
+                    [r|{ let a = 0
+                    0 }|]
+                    `shouldParse` Block [LetBinding "a" (IntLiteral 0)] (IntLiteral 0)
+
+            it "parses block expression with many let bindings" $
+                only
+                    blockExpression
+                    [r|{ let a = 0
+                        let jp = 2
+                    0 }|]
+                    `shouldParse` Block [LetBinding "a" (IntLiteral 0), LetBinding "jp" (IntLiteral 2)] (IntLiteral 0)
     describe "evaluate" $ do
         let emptyScope = evalExpression HM.empty
         prop "evaluates int literals" $
@@ -370,15 +414,16 @@ main = hspec $ do
                 emptyScope (BoolLiteral True `Equal` BoolLiteral True) `shouldBe` Right (VBool True)
             it "false is not equal to true" $
                 emptyScope (BoolLiteral False `Equal` BoolLiteral True) `shouldBe` Right (VBool False)
-    describe "typecheck" $ do
-        it "accepts a program with boolean expression as a condition" $
-            typecheck ([], [StIf (BoolLiteral True) StReturn]) `shouldBe` Right ()
-        it "does not accept a program with int expression as a condition" $
-            typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
-        it "does not accept a program with int expression as a condition" $
-            typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
+    -- TODO: uncomment when implemented
+    -- describe "typecheck" $ do
+    --     it "accepts a program with boolean expression as a condition" $
+    --         typecheck ([], [StIf (BoolLiteral True) StReturn]) `shouldBe` Right ()
+    --     it "does not accept a program with int expression as a condition" $
+    --         typecheck ([], [StIf (IntLiteral 69) StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
+    --     xit "does not accept a program with int expression as a condition" $
+    --         typecheck ([("a", TypeInt)], [StAssignment "a" (IntLiteral 69), StIf (Identifier "a") StReturn]) `shouldBe` Left (EType TypeBool (VInt 69) :| [])
 
-    describe "compiler" $ do
+    xdescribe "compiler" $ do
         sealFiles <- runIO $ findByExtension [".seal"] "test/programs/"
         forM_ sealFiles $ \sealFile -> do
             it (takeBaseName sealFile) $ runGoldenTestForFile sealFile

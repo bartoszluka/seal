@@ -13,6 +13,8 @@ default-extensions:
   - ImportQualifiedPost
   - ScopedTypeVariables
   - LambdaCase
+  - NamedFieldPuns
+  - RecordWildCards
 
 extra-source-files:
   - README.md
